@@ -1586,7 +1586,17 @@ cvStart.addEventListener('click', async () => {
     writable = await chooseVideoFile(mimeType, filename);
     if (writable === false) return;
   } catch (error) {
-    cvShowExportError('Could not open output file: ' + error.message);
+    const message = error?.message || String(error);
+    const fileWriteDenied = error?.name === 'SecurityError'
+      || error?.name === 'NotAllowedError'
+      || /createWritable|not allowed by the user agent|current context/i.test(message);
+    if (fileWriteDenied && estimatedOutputBytes > memoryExportLimit) {
+      cvShowExportError(
+        `This browser context blocks direct-to-disk saving. The ${fmtBytes(estimatedOutputBytes)} export was not started because it is too large to safely buffer in memory. Open this page in desktop Chrome or Edge, then retry.`
+      );
+    } else {
+      cvShowExportError('Could not open output file: ' + message);
+    }
     return;
   }
   cvProgressSection.style.display = 'block';
