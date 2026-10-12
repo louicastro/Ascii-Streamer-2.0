@@ -517,8 +517,14 @@ export class AsciliWebGLRenderer {
     try {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, sourceEl);
     } catch {
-      this._endGpuTimer();
-      return false;
+      try {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceEl);
+        this._lastVideoW = sourceEl.videoWidth || sourceEl.width || vw;
+        this._lastVideoH = sourceEl.videoHeight || sourceEl.height || vh;
+      } catch {
+        this._endGpuTimer();
+        return false;
+      }
     }
 
     if (this._lastAtlasVer !== atlas.version) {
@@ -781,14 +787,21 @@ export class AsciliEngine {
     this._sampleCanvas  = document.createElement('canvas');
     this._sampleCtx     = this._sampleCanvas.getContext('2d', { willReadFrequently: true });
     this._atlas         = new AsciliGlyphAtlas();
-    this._webgl         = null;
-    this._gpuCanvas     = null;
+    this._gpuCanvas     = document.createElement('canvas');
+    this._gpuCanvas.width  = 640;
+    this._gpuCanvas.height = 360;
+    this.hardwareProfile = getGraphicsProfile();
+    try {
+      this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
+      this._webgl.profile = this.hardwareProfile;
+    } catch {
+      this._webgl = null;
+    }
     this._displayCtx    = null;
     this._canvas2d      = null;
     this._canvasWorker  = null;
     this._canvasWorkerFailed = false;
     this._currentTarget = null;
-    this.hardwareProfile = getGraphicsProfile();
 
     this._lastCols      = 0;
     this._lastRows      = 0;
@@ -832,17 +845,13 @@ export class AsciliEngine {
         // Keep the visible canvas 2D-capable so a shader/context failure can
         // always fall back and screenshots/recordings see the finished frame.
         this._displayCtx = targetCanvas.getContext('2d', { alpha: false });
-        this._gpuCanvas = (typeof OffscreenCanvas !== 'undefined')
-          ? new OffscreenCanvas(Math.max(2, targetCanvas.width), Math.max(2, targetCanvas.height))
-          : document.createElement('canvas');
-        this._gpuCanvas.width = targetCanvas.width;
-        this._gpuCanvas.height = targetCanvas.height;
-
-        try {
-          this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
-          this._webgl.profile = this.hardwareProfile;
-        } catch {
-          this._webgl = null;
+        if (!this._webgl) {
+          try {
+            this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
+            this._webgl.profile = this.hardwareProfile;
+          } catch {
+            this._webgl = null;
+          }
         }
 
         if (!this._webgl?.supported) this._webgl = null;
@@ -851,11 +860,18 @@ export class AsciliEngine {
 
       // Check if WebGL context needs recreation
       if (this._webgl && (!this._webgl.supported || this._webgl.gl?.isContextLost())) {
-        try {
-          this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
-          this._webgl.profile = this.hardwareProfile;
-        } catch {
-          // Keep trying next frame
+        const now = performance.now();
+        if (!this._lastContextRetry || now - this._lastContextRetry > 2000) {
+          this._lastContextRetry = now;
+          try {
+            this._gpuCanvas = document.createElement('canvas');
+            this._gpuCanvas.width = targetCanvas.width;
+            this._gpuCanvas.height = targetCanvas.height;
+            this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
+            this._webgl.profile = this.hardwareProfile;
+          } catch {
+            this._webgl = null;
+          }
         }
       }
 
@@ -877,8 +893,8 @@ export class AsciliEngine {
         }
       }
 
-      // Fallback path: ONLY engaged if WebGL is unavailable on this device
-      if (!rendered && (!this._webgl || !this._webgl.supported)) {
+      // Fallback path: engaged if WebGL failed or is unavailable on this device
+      if (!rendered) {
         if (!config.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
           this._initFallbackRenderer(targetCanvas);
         }

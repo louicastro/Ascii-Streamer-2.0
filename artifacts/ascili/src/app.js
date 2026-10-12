@@ -656,7 +656,6 @@ function renderLoop(ts) {
 
   const targetCols = Math.max(20, Math.floor(cfg.cols * state.qualityScale));
   const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
-  updateAsciiLayout(expectedRows, targetCols);
 
   const t0 = performance.now();
   const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
@@ -1381,9 +1380,25 @@ function charSetLabel(cs) {
 }
 
 function detectMime() {
-  const candidates = [
-    'video/mp4;codecs=avc1', 'video/mp4',
-    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
+  const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
+  const candidates = isLinux ? [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+  ] : [
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp8',
+    'video/webm',
   ];
   return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || 'video/webm';
 }

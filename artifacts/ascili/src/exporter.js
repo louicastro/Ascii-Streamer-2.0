@@ -316,10 +316,23 @@ export class AsciliVideoExporter {
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick best supported MIME type
-    const candidates = [
+    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
+    const candidates = isLinux ? [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp8',
+      'video/webm',
+      'video/mp4;codecs=avc1,mp4a.40.2',
       'video/mp4;codecs=avc1',
       'video/mp4',
+    ] : [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8,opus',
       'video/webm;codecs=vp8',
       'video/webm',
     ];
@@ -389,9 +402,7 @@ export class AsciliVideoExporter {
       const scale = Math.min(canvasW / this._frameCanvas.width, canvasH / this._frameCanvas.height);
       const drawW = Math.round(this._frameCanvas.width * scale);
       const drawH = Math.round(this._frameCanvas.height * scale);
-      const gpu = this._engine?.gpuCanvas;
-      const source = (frameRendered && gpu && gpu.width > 0 && gpu.height > 0) ? gpu : this._frameCanvas;
-      outputCtx.drawImage(source, (canvasW - drawW) / 2, (canvasH - drawH) / 2, drawW, drawH);
+      outputCtx.drawImage(this._frameCanvas, (canvasW - drawW) / 2, (canvasH - drawH) / 2, drawW, drawH);
     };
 
     // Pre-render the first frame to initialize the canvas
@@ -461,21 +472,54 @@ export class AsciliVideoExporter {
                         : effectiveW >= 1500 ? 8_000_000
                         : 4_000_000;
 
-    try {
-      this._recorder = new MediaRecorder(stream, {
-        mimeType:    this._mimeType,
-        videoBitsPerSecond: bitsPerSecond,
-      });
-    } catch (e) {
-      this._running = false;
-      this._wakeLock?.release().catch(() => {});
-      this._wakeLock = null;
-      this._stream?.getTracks().forEach(track => track.stop());
-      this._stream = null;
-      this._writable?.abort().catch(() => {});
-      this._writable = null;
-      onError?.('MediaRecorder error: ' + e.message); return;
+    let recorder = null;
+    const tryCandidates = [this._mimeType, ...candidates];
+    for (const cand of tryCandidates) {
+      if (!cand) continue;
+      try {
+        if (MediaRecorder.isTypeSupported(cand)) {
+          recorder = new MediaRecorder(stream, {
+            mimeType: cand,
+            videoBitsPerSecond: bitsPerSecond,
+          });
+          this._mimeType = cand;
+          break;
+        }
+      } catch {}
     }
+    if (!recorder && stream.getAudioTracks().length > 0) {
+      // Audio tracks may conflict with codec — remove and retry video-only
+      stream.getAudioTracks().forEach(track => stream.removeTrack(track));
+      for (const cand of tryCandidates) {
+        if (!cand) continue;
+        try {
+          if (MediaRecorder.isTypeSupported(cand)) {
+            recorder = new MediaRecorder(stream, {
+              mimeType: cand,
+              videoBitsPerSecond: bitsPerSecond,
+            });
+            this._mimeType = cand;
+            break;
+          }
+        } catch {}
+      }
+    }
+    if (!recorder) {
+      try {
+        recorder = new MediaRecorder(stream, { videoBitsPerSecond: bitsPerSecond });
+        this._mimeType = recorder.mimeType || 'video/webm';
+      } catch (e) {
+        this._running = false;
+        this._wakeLock?.release().catch(() => {});
+        this._wakeLock = null;
+        this._stream?.getTracks().forEach(track => track.stop());
+        this._stream = null;
+        this._writable?.abort().catch(() => {});
+        this._writable = null;
+        onError?.('MediaRecorder error: ' + e.message); return;
+      }
+    }
+    this._recorder = recorder;
 
     this._recorder.ondataavailable = e => {
       if (!e.data || e.data.size === 0) return;
@@ -562,7 +606,18 @@ export class AsciliVideoExporter {
       onError?.('Recorder error: ' + e.error?.message);
     };
 
-    this._recorder.start(500); // flush chunks every 500 ms
+    try {
+      this._recorder.start(500); // flush chunks every 500 ms
+    } catch (e) {
+      this._running = false;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
+      this._stream?.getTracks().forEach(track => track.stop());
+      this._stream = null;
+      this._writable?.abort().catch(() => {});
+      this._writable = null;
+      onError?.('Could not start video recorder: ' + e.message); return;
+    }
 
     const rawDuration = videoEl.duration;
     const duration = (isFinite(rawDuration) && rawDuration > 0) ? rawDuration : 10;
@@ -571,6 +626,7 @@ export class AsciliVideoExporter {
     let lastSourceTime = -1;
     let lastSourceAdvanceAt = performance.now();
     let playbackStarted = false;
+    let finishing = false;
 
     const fail = (message, error) => {
       this._outputError = error || new Error(message);
@@ -579,7 +635,7 @@ export class AsciliVideoExporter {
     };
 
     const captureFrame = () => {
-      if (!this._running || !playbackStarted) return;
+      if (!this._running || !playbackStarted || finishing) return;
       if (this._recorder?.state === 'paused') {
         return;
       }
@@ -604,7 +660,9 @@ export class AsciliVideoExporter {
         fail('Frame render failed: ' + error.message, error);
         return;
       }
-      if (hasRequestFrame) videoTrack.requestFrame();
+      if (hasRequestFrame) {
+        try { videoTrack.requestFrame(); } catch {}
+      }
 
       const pct = Math.min(1, sourceTime / duration);
       const elapsed = (performance.now() - this._startWall) / 1000;
@@ -612,6 +670,7 @@ export class AsciliVideoExporter {
       onProgress?.(pct, elapsed, eta);
 
       if (videoEl.ended || sourceTime >= duration - (1 / targetFpsVal) * 0.5) {
+        finishing = true;
         this._ticker?.stop();
         setTimeout(() => this._finishRecording(), 250);
         return;
@@ -1119,9 +1178,25 @@ export class AsciliLiveRecorder {
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick MIME
-    const candidates = [
-      'video/mp4;codecs=avc1', 'video/mp4',
-      'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
+    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
+    const candidates = isLinux ? [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp8',
+      'video/webm',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+    ] : [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp8',
+      'video/webm',
     ];
     this._mimeType = candidates.find(t => {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
@@ -1197,21 +1272,54 @@ export class AsciliLiveRecorder {
       }
     } catch {}
 
-    try {
-      this._recorder = new MediaRecorder(stream, {
-        mimeType: this._mimeType,
-        videoBitsPerSecond: bitsPerSecond,
-      });
-    } catch (e) {
-      this._running = false;
-      this._wakeLock?.release().catch(() => {});
-      this._wakeLock = null;
-      this._stream?.getTracks().forEach(track => track.stop());
-      this._stream = null;
-      this._writable?.abort().catch(() => {});
-      this._writable = null;
-      onError?.('MediaRecorder error: ' + e.message); return;
+    let recorder = null;
+    const tryCandidates = [this._mimeType, ...candidates];
+    for (const cand of tryCandidates) {
+      if (!cand) continue;
+      try {
+        if (MediaRecorder.isTypeSupported(cand)) {
+          recorder = new MediaRecorder(stream, {
+            mimeType: cand,
+            videoBitsPerSecond: bitsPerSecond,
+          });
+          this._mimeType = cand;
+          break;
+        }
+      } catch {}
     }
+    if (!recorder && stream.getAudioTracks().length > 0) {
+      // Audio tracks may conflict with codec — remove and retry video-only
+      stream.getAudioTracks().forEach(track => stream.removeTrack(track));
+      for (const cand of tryCandidates) {
+        if (!cand) continue;
+        try {
+          if (MediaRecorder.isTypeSupported(cand)) {
+            recorder = new MediaRecorder(stream, {
+              mimeType: cand,
+              videoBitsPerSecond: bitsPerSecond,
+            });
+            this._mimeType = cand;
+            break;
+          }
+        } catch {}
+      }
+    }
+    if (!recorder) {
+      try {
+        recorder = new MediaRecorder(stream, { videoBitsPerSecond: bitsPerSecond });
+        this._mimeType = recorder.mimeType || 'video/webm';
+      } catch (e) {
+        this._running = false;
+        this._wakeLock?.release().catch(() => {});
+        this._wakeLock = null;
+        this._stream?.getTracks().forEach(track => track.stop());
+        this._stream = null;
+        this._writable?.abort().catch(() => {});
+        this._writable = null;
+        onError?.('MediaRecorder error: ' + e.message); return;
+      }
+    }
+    this._recorder = recorder;
 
     this._recorder.ondataavailable = e => {
       if (!e.data || e.data.size === 0) return;
@@ -1276,7 +1384,18 @@ export class AsciliLiveRecorder {
       onError?.('Recorder error: ' + e.error?.message);
     };
 
-    this._recorder.start(500);
+    try {
+      this._recorder.start(500);
+    } catch (e) {
+      this._running = false;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
+      this._stream?.getTracks().forEach(track => track.stop());
+      this._stream = null;
+      this._writable?.abort().catch(() => {});
+      this._writable = null;
+      onError?.('Could not start live video recorder: ' + e.message); return;
+    }
   }
 
   /**
