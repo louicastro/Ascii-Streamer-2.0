@@ -1365,6 +1365,41 @@ async function chooseVideoFile(mimeType, suggestedName) {
   }
 }
 
+async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes) {
+  if (!navigator.storage?.getDirectory) return null;
+  try {
+    const estimate = await navigator.storage.estimate?.();
+    const available = Number.isFinite(estimate?.quota) && Number.isFinite(estimate?.usage)
+      ? estimate.quota - estimate.usage
+      : Infinity;
+    if (available < expectedBytes * 1.1) return null;
+
+    const root = await navigator.storage.getDirectory();
+    const tempName = `.ascili-${Date.now()}-${suggestedName}`;
+    const handle = await root.getFileHandle(tempName, { create: true });
+    const stream = await handle.createWritable();
+    let closed = false;
+    const cleanup = () => root.removeEntry(tempName).catch(() => {});
+    return {
+      writable: {
+        write: chunk => stream.write(chunk),
+        close: async () => { await stream.close(); closed = true; },
+        abort: async () => {
+          try { if (!closed) await stream.abort(); } finally { await cleanup(); }
+        },
+      },
+      async download() {
+        if (!closed) throw new Error('Temporary export file is not ready yet.');
+        download(suggestedName, await handle.getFile(), mimeType);
+        window.setTimeout(cleanup, 60_000);
+      },
+      cleanup,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function drawConverterPreview(videoEl) {
   if (!videoEl?.videoWidth || !cvPreviewCanvas) return;
   const previewCols = Math.min(cfg.cols || 80, 240);
@@ -1567,37 +1602,82 @@ cvStart.addEventListener('click', async () => {
     ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps)
     : estimateVideoBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, resolution);
   const memoryExportLimit = (isSrt ? 96 : 192) * 1024 * 1024;
+  const mimeType = isSrt ? 'text/plain' : detectMime();
+  const extension = isSrt ? 'srt' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const filename = `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
+  let writable = null;
+  let temporaryExport = null;
+  let maxBufferedBytes = null;
+  const allowBufferedExport = () => {
+    // The fallback is intentionally opt-in: a Blob export retains the encoded
+    // video in memory and may need substantially more RAM than its final size.
+    const hardLimit = 1536 * 1024 * 1024;
+    if (isSrt || estimatedOutputBytes > hardLimit) return false;
+    const bufferLimit = Math.min(hardLimit, Math.max(memoryExportLimit, Math.ceil(estimatedOutputBytes * 1.2)));
+    const requiredGiB = ((bufferLimit * 2) / (1024 ** 3)).toFixed(1);
+    if (!confirm(
+      `This browser cannot write directly to a file or temporary disk storage. Retry by buffering the export before downloading? It is estimated at ${fmtBytes(estimatedOutputBytes)} and may need around ${requiredGiB} GB of free memory. The tab may become unresponsive.`
+    )) return false;
+    maxBufferedBytes = bufferLimit;
+    return true;
+  };
   if (estimatedOutputBytes > memoryExportLimit && typeof window.showSaveFilePicker !== 'function') {
+    temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
+    if (temporaryExport) writable = temporaryExport.writable;
+  }
+  if (estimatedOutputBytes > memoryExportLimit && !writable
+      && typeof window.showSaveFilePicker !== 'function' && !allowBufferedExport()) {
     cvProgressSection.style.display = 'none';
     cvDoneSection.style.display = 'none';
     cvStart.style.display = '';
     cvStop.style.display = 'none';
     cvWarning.style.display = 'flex';
-    cvWarningText.textContent =
-      `${fmtBytes(estimatedOutputBytes)} is too large to keep safely in browser memory. In Brave, open brave://flags/#file-system-access-api, enable “File System Access API”, and relaunch Brave. Then retry and choose where to save the file. Alternatively, use desktop Chrome or Edge.`;
-    showToast('Enable direct-to-file saving for long video exports');
+    cvWarningText.textContent = isSrt
+      ? `${fmtBytes(estimatedOutputBytes)} needs temporary disk storage for this subtitle export. Open this page in desktop Chrome or Edge outside the editor preview and retry.`
+      : estimatedOutputBytes > 1536 * 1024 * 1024
+      ? `${fmtBytes(estimatedOutputBytes)} exceeds the in-browser fallback limit. Open this page in desktop Chrome or Edge outside the editor preview and save directly to disk.`
+      : `${fmtBytes(estimatedOutputBytes)} could not be stored on temporary browser disk. Open this page in desktop Chrome or Edge, or retry and accept the memory warning.`;
+    showToast('Export was not started');
     return;
   }
-  const mimeType = isSrt ? 'text/plain' : detectMime();
-  const extension = isSrt ? 'srt' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
-  const filename = `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
-  let writable = null;
   try {
-    writable = await chooseVideoFile(mimeType, filename);
-    if (writable === false) return;
+    if (!writable) {
+      writable = await chooseVideoFile(mimeType, filename);
+      if (writable === false) return;
+    }
   } catch (error) {
     const message = error?.message || String(error);
     const fileWriteDenied = error?.name === 'SecurityError'
       || error?.name === 'NotAllowedError'
       || /createWritable|not allowed by the user agent|current context/i.test(message);
     if (fileWriteDenied && estimatedOutputBytes > memoryExportLimit) {
-      cvShowExportError(
-        `This browser context blocks direct-to-disk saving. The ${fmtBytes(estimatedOutputBytes)} export was not started because it is too large to safely buffer in memory. Open this page in desktop Chrome or Edge, then retry.`
-      );
+      temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
+      if (temporaryExport) {
+        writable = temporaryExport.writable;
+        showToast('Using temporary browser storage; the finished file will download automatically.');
+      }
+    }
+    if (fileWriteDenied && writable) {
+      // Use origin-private storage when the editor blocks native file writes.
+    } else if (fileWriteDenied && estimatedOutputBytes <= memoryExportLimit) {
+      // Embedded browsers may expose the picker but deny writes. Small exports
+      // can still complete through the regular download flow without a file handle.
+      writable = null;
+      showToast('This browser blocks direct saving; the finished file will download when ready.');
+    } else if (fileWriteDenied && allowBufferedExport()) {
+      writable = null;
+      showToast('Retrying without direct file access; the finished video will download when ready.');
+    } else if (fileWriteDenied) {
+      cvShowExportError(isSrt
+        ? `This browser tab blocks direct file writing and temporary disk storage is unavailable. Open this page in desktop Chrome or Edge and retry the ${fmtBytes(estimatedOutputBytes)} subtitle export.`
+        : estimatedOutputBytes > 1536 * 1024 * 1024
+        ? `This browser tab blocks direct file writing, and ${fmtBytes(estimatedOutputBytes)} exceeds the in-browser fallback limit. Open this page in desktop Chrome or Edge outside the editor preview and retry.`
+        : `This browser tab blocks direct file writing and temporary browser storage is unavailable. Retry and accept the memory warning, or open in desktop Chrome or Edge.`);
+      return;
     } else {
       cvShowExportError('Could not open output file: ' + message);
+      return;
     }
-    return;
   }
   cvProgressSection.style.display = 'block';
   cvError.hidden = true;
@@ -1630,8 +1710,17 @@ cvStart.addEventListener('click', async () => {
         cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
         cvUpdateProgressClock();
       },
-      onComplete(blob, resultMime, result) {
+      async onComplete(blob, resultMime, result) {
         cvStopProgressClock();
+        if (temporaryExport) {
+          try {
+            await temporaryExport.download();
+          } catch (error) {
+            temporaryExport.cleanup();
+            cvShowExportError('Could not download the temporary subtitle file: ' + (error?.message || error));
+            return;
+          }
+        }
         cvBlob = blob;
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
@@ -1644,10 +1733,12 @@ cvStart.addEventListener('click', async () => {
         cvProgressFrames.textContent = `${totalFrames.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
         cvProgressSection.querySelector('.cv-section-label').textContent = 'SRT EXPORT COMPLETE';
         cvDoneSection.style.display = 'flex';
-        cvDoneMeta.textContent = result.savedToDisk
+        cvDoneMeta.textContent = temporaryExport
+          ? `${fmtBytes(estimatedOutputBytes)}  ·  Downloaded SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`
+          : result.savedToDisk
           ? `Saved to selected file  ·  SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`
           : `${fmtBytes(blob.size)}  ·  SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`;
-        showToast(result.savedToDisk ? 'SRT saved to file' : 'SRT ready to download');
+        showToast(temporaryExport ? 'SRT download started' : result.savedToDisk ? 'SRT saved to file' : 'SRT ready to download');
       },
       onError(message) {
         cvStop.style.display = 'none';
@@ -1669,6 +1760,7 @@ cvStart.addEventListener('click', async () => {
     targetFps,
     resolution,
     writable,
+    ...(maxBufferedBytes ? { maxBufferedBytes } : {}),
     onProgress(pct) {
       cvCurrentProgress = pct;
       const frameNum = Math.round(pct * totalFrames);
@@ -1685,8 +1777,17 @@ cvStart.addEventListener('click', async () => {
         pCtx?.drawImage(src, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
       }
     },
-    onComplete(blob, mimeType, result) {
+    async onComplete(blob, mimeType, result) {
       cvStopProgressClock();
+      if (temporaryExport) {
+        try {
+          await temporaryExport.download();
+        } catch (error) {
+          temporaryExport.cleanup();
+          cvShowExportError('Could not download the temporary video file: ' + (error?.message || error));
+          return;
+        }
+      }
       cvBlob     = blob;
       cvMimeType = mimeType;
 
@@ -1701,10 +1802,12 @@ cvStart.addEventListener('click', async () => {
 
       cvDoneSection.style.display = 'flex';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      cvDoneMeta.textContent = result?.savedToDisk
+      cvDoneMeta.textContent = temporaryExport
+        ? `${fmtBytes(estimatedOutputBytes)}  ·  Downloaded ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
+        : result?.savedToDisk
         ? `Saved to selected file  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
         : `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
-      showToast(result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
+      showToast(temporaryExport ? 'Video download started' : result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
     },
     onError(msg) {
       cvStop.style.display  = 'none';
