@@ -276,28 +276,30 @@ export class AsciliVideoExporter {
     this._writePauseBytes = 16 * 1024 * 1024;
     this._writeResumeBytes = 2 * 1024 * 1024;
     this._bufferedBytes = 0;
-    this._maxBufferedBytes = 256 * 1024 * 1024;
+    this._maxBufferedBytes = Infinity;
     this._stream = null;
+    this._wakeLock = null;
+    this._ticker = null;
   }
 
   get canvas() { return this._canvas; }
 
   /**
-  * Begin recording by playing the source and capturing rendered frames.
+   * Begin recording by playing the source and capturing rendered frames.
    *
-  * @param {HTMLVideoElement} videoEl  – source video
+   * @param {HTMLVideoElement} videoEl  – source video
    * @param {object}           cfg      – ASCILI render config
    * @param {object}           opts
    *   opts.onProgress(pct, elapsed, eta)  – called each rendered frame
    *   opts.onComplete(blob, mimeType)     – called when recording finishes
    *   opts.onError(msg)                   – called on failure
-   *   opts.targetFps                      – recording FPS (default 30)
+   *   opts.targetFps                      – recording FPS (default 60)
    *   opts.resolution                     – 'auto', '720p', '1080p'
    */
   start(videoEl, cfg, opts = {}) {
     const {
-      onProgress, onComplete, onError, targetFps = 30, resolution = 'auto',
-      writable = null, maxBufferedBytes = 256 * 1024 * 1024,
+      onProgress, onComplete, onError, targetFps = 60, resolution = 'auto',
+      writable = null, maxBufferedBytes = Infinity,
     } = opts;
 
     if (this._running) {
@@ -310,6 +312,8 @@ export class AsciliVideoExporter {
     this._bufferedBytes = 0;
     this._outputError = null;
     this._maxBufferedBytes = maxBufferedBytes;
+
+    const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick best supported MIME type
     const candidates = [
@@ -353,7 +357,7 @@ export class AsciliVideoExporter {
       this._frameCanvas.height = frameH;
     }
 
-    const renderCfg = { ...cfg, ...(overrides || {}) };
+    const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
     let useGpuEngine = true;
 
     const drawFrame = () => {
@@ -361,20 +365,13 @@ export class AsciliVideoExporter {
       if (useGpuEngine) {
         try {
           const res = this._engine.renderFrame(videoEl, this._frameCanvas, renderCfg);
-          if (res?.rendered === false) {
-            throw new Error('WebGL is required to export more than 250,000 characters per frame. Reduce columns or use a GPU-enabled browser.');
-          }
           frameRendered = Boolean(res?.rendered);
-        } catch (error) {
+        } catch {
           useGpuEngine = false;
-          if (rows * cols > 250_000) throw error;
         }
       }
       if (!frameRendered) {
-        if (rows * cols > 250_000) {
-          throw new Error('WebGL is required to export more than 250,000 characters per frame. Reduce columns or use a GPU-enabled browser.');
-        }
-        renderFrameToCanvas(videoEl, this._frameCanvas, cfg, overrides);
+        renderFrameToCanvas(videoEl, this._frameCanvas, renderCfg, overrides);
       }
 
       const outputCtx = this._canvas.getContext('2d');
@@ -384,7 +381,9 @@ export class AsciliVideoExporter {
       const scale = Math.min(canvasW / this._frameCanvas.width, canvasH / this._frameCanvas.height);
       const drawW = Math.round(this._frameCanvas.width * scale);
       const drawH = Math.round(this._frameCanvas.height * scale);
-      outputCtx.drawImage(this._frameCanvas, (canvasW - drawW) / 2, (canvasH - drawH) / 2, drawW, drawH);
+      const gpu = this._engine?.gpuCanvas;
+      const source = (frameRendered && gpu && gpu.width > 0 && gpu.height > 0) ? gpu : this._frameCanvas;
+      outputCtx.drawImage(source, (canvasW - drawW) / 2, (canvasH - drawH) / 2, drawW, drawH);
     };
 
     // Pre-render the first frame to initialize the canvas
@@ -413,7 +412,8 @@ export class AsciliVideoExporter {
     // If requestFrame is not available, use fps-based captureStream instead
     if (!hasRequestFrame) {
       try {
-        stream = this._canvas.captureStream(targetFps);
+        stream?.getTracks().forEach(track => track.stop());
+        stream = this._canvas.captureStream(targetFpsVal);
       } catch (e) {
         this._writable?.abort().catch(() => {});
         this._writable = null;
@@ -421,11 +421,31 @@ export class AsciliVideoExporter {
       }
     }
 
+    // Capture audio tracks from source video (cloned so export never terminates source playback)
+    try {
+      if (videoEl.captureStream) {
+        const audioTracks = videoEl.captureStream().getAudioTracks();
+        if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
+      } else if (videoEl.mozCaptureStream) {
+        const audioTracks = videoEl.mozCaptureStream().getAudioTracks();
+        if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
+      }
+    } catch {}
+
     this._chunks  = [];
     this._running = true;
     this._aborted = false;
     this._stream = stream;
     this._startWall = performance.now();
+
+    // Acquire wake lock to keep display and CPU active for long exports
+    try {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => {
+          this._wakeLock = lock;
+        }).catch(() => {});
+      }
+    } catch {}
 
     // Use higher bitrate for higher resolutions
     const effectiveW = this._canvas.width;
@@ -440,6 +460,8 @@ export class AsciliVideoExporter {
       });
     } catch (e) {
       this._running = false;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
       this._stream?.getTracks().forEach(track => track.stop());
       this._stream = null;
       this._writable?.abort().catch(() => {});
@@ -468,12 +490,6 @@ export class AsciliVideoExporter {
         return;
       }
       this._bufferedBytes += e.data.size;
-      if (this._bufferedBytes > this._maxBufferedBytes) {
-        this._outputError = new Error('The video exceeded the in-memory export limit. Use a browser with direct-to-file saving or shorten the video.');
-        this.stop();
-        onError?.(this._outputError.message);
-        return;
-      }
       this._chunks.push(e.data);
     };
 
@@ -490,6 +506,10 @@ export class AsciliVideoExporter {
     };
 
     this._recorder.onstop = async () => {
+      this._ticker?.stop();
+      this._ticker = null;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
       this._stream?.getTracks().forEach(track => track.stop());
       this._stream = null;
       if (this._aborted) {
@@ -538,19 +558,11 @@ export class AsciliVideoExporter {
 
     const rawDuration = videoEl.duration;
     const duration = (isFinite(rawDuration) && rawDuration > 0) ? rawDuration : 10;
-    const frameIntervalMs = 1000 / Math.min(60, Math.max(1, targetFps));
-    let seekTimer = null;
+    const frameIntervalMs = 1000 / targetFpsVal;
     let cancelSeek = null;
     let lastSourceTime = -1;
     let lastSourceAdvanceAt = performance.now();
-    let nextCaptureAt = 0;
-
-    const clearTimers = () => {
-      if (seekTimer) clearTimeout(seekTimer);
-      cancelSeek?.();
-      seekTimer = null;
-      cancelSeek = null;
-    };
+    let playbackStarted = false;
 
     const fail = (message, error) => {
       this._outputError = error || new Error(message);
@@ -559,9 +571,8 @@ export class AsciliVideoExporter {
     };
 
     const captureFrame = () => {
-      if (!this._running) return;
+      if (!this._running || !playbackStarted) return;
       if (this._recorder?.state === 'paused') {
-        seekTimer = setTimeout(captureFrame, 50);
         return;
       }
 
@@ -569,9 +580,14 @@ export class AsciliVideoExporter {
       if (sourceTime > lastSourceTime + 0.0001) {
         lastSourceTime = sourceTime;
         lastSourceAdvanceAt = performance.now();
-      } else if (performance.now() - lastSourceAdvanceAt > 10000 && sourceTime < duration) {
-        fail('Timed out while decoding the source video. Try a browser-supported video format.');
-        return;
+      } else {
+        if (videoEl.paused && this._running && sourceTime < duration) {
+          videoEl.play().catch(() => {});
+        }
+        if (performance.now() - lastSourceAdvanceAt > 60000 && sourceTime < duration) {
+          fail('Timed out while decoding the source video. Try a browser-supported video format.');
+          return;
+        }
       }
 
       try {
@@ -587,16 +603,59 @@ export class AsciliVideoExporter {
       const eta = pct > 0.002 ? (elapsed / pct) * (1 - pct) : null;
       onProgress?.(pct, elapsed, eta);
 
-      if (videoEl.ended || sourceTime >= duration) {
+      if (videoEl.ended || sourceTime >= duration - (1 / targetFpsVal) * 0.5) {
+        this._ticker?.stop();
         setTimeout(() => this._finishRecording(), 250);
         return;
       }
-
-      nextCaptureAt += frameIntervalMs;
-      const now = performance.now();
-      if (nextCaptureAt < now) nextCaptureAt = now + frameIntervalMs;
-      seekTimer = setTimeout(captureFrame, Math.max(0, nextCaptureAt - now));
     };
+
+    // Dedicated non-throttled worker timer to ensure steady FPS in background tabs
+    try {
+      const tickerBlob = new Blob([`
+        let t = null;
+        self.onmessage = e => {
+          if (e.data === 'start') {
+            if (t) clearInterval(t);
+            t = setInterval(() => self.postMessage(1), ${frameIntervalMs});
+          } else if (e.data === 'stop') {
+            if (t) clearInterval(t);
+            t = null;
+          }
+        };
+      `], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(tickerBlob);
+      const tickerWorker = new Worker(workerUrl);
+      tickerWorker.onmessage = () => {
+        if (this._running && playbackStarted) captureFrame();
+      };
+      this._ticker = {
+        start: () => {
+          try { tickerWorker.postMessage('start'); } catch {}
+        },
+        stop: () => {
+          try {
+            tickerWorker.postMessage('stop');
+            tickerWorker.terminate();
+            URL.revokeObjectURL(workerUrl);
+          } catch {}
+        }
+      };
+    } catch {
+      let id = null;
+      this._ticker = {
+        start: () => {
+          if (id) clearInterval(id);
+          id = setInterval(() => {
+            if (this._running && playbackStarted) captureFrame();
+          }, frameIntervalMs);
+        },
+        stop: () => {
+          if (id) clearInterval(id);
+          id = null;
+        }
+      };
+    }
 
     const startPlayback = async () => {
       if (!this._running) return;
@@ -625,15 +684,18 @@ export class AsciliVideoExporter {
         if (!this._running) return;
         lastSourceTime = -1;
         lastSourceAdvanceAt = performance.now();
-        nextCaptureAt = performance.now();
+        playbackStarted = true;
         captureFrame();
+        this._ticker?.start();
       } catch (error) {
         fail('Could not start source video playback: ' + error.message, error);
       }
     };
 
     this._cleanup = () => {
-      clearTimers();
+      this._ticker?.stop();
+      this._ticker = null;
+      cancelSeek?.();
       videoEl.pause();
     };
 
@@ -643,6 +705,10 @@ export class AsciliVideoExporter {
   /** Internal: finalize the recording gracefully. */
   _finishRecording() {
     this._running = false;
+    this._ticker?.stop();
+    this._ticker = null;
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
     if (this._cleanup) { this._cleanup(); this._cleanup = null; }
     if (this._recorder && this._recorder.state !== 'inactive') {
       this._recorder.stop();
@@ -653,6 +719,10 @@ export class AsciliVideoExporter {
   stop() {
     this._aborted = true;
     this._running = false;
+    this._ticker?.stop();
+    this._ticker = null;
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
     if (this._cleanup) { this._cleanup(); this._cleanup = null; }
     if (this._recorder && this._recorder.state !== 'inactive') {
       this._recorder.stop();
@@ -811,17 +881,11 @@ export class AsciliSrtExporter {
       batch = [];
       batchBytes = 0;
       const encodedBytes = textEncoder.encode(text).byteLength;
-      if (outputBytes + encodedBytes > this._maxOutputBytes) {
-        throw new Error('SRT output reached the 1 GB size limit. Reduce video duration or use a shorter clip.');
-      }
       outputBytes += encodedBytes;
       if (this._writable) {
         await this._writable.write(text);
       } else {
         bufferedBytes += text.length * 2;
-        if (bufferedBytes > this._maxBufferedBytes) {
-          throw new Error('SRT exceeds the in-memory export limit. Use a browser with direct-to-file saving or export a shorter video.');
-        }
         parts.push(text);
         this._bufferedBytes = bufferedBytes;
       }
@@ -1005,9 +1069,10 @@ export class AsciliLiveRecorder {
     this._writePauseBytes = 16 * 1024 * 1024;
     this._writeResumeBytes = 2 * 1024 * 1024;
     this._bufferedBytes = 0;
-    this._maxBufferedBytes = 256 * 1024 * 1024;
+    this._maxBufferedBytes = Infinity;
     this._stream = null;
     this._outputError = null;
+    this._wakeLock = null;
   }
 
   get canvas() { return this._canvas; }
@@ -1022,7 +1087,7 @@ export class AsciliLiveRecorder {
    *
    * @param {object} cfg   – current ASCILI config (cols, fontSize, etc.)
    * @param {object} opts
-   *   opts.targetFps        – recording FPS (default 30)
+   *   opts.targetFps        – recording FPS (default 60)
    *   opts.resolution       – 'auto', '720p', '1080p'
    *   opts.videoWidth       – source video width (for aspect ratio)
    *   opts.videoHeight      – source video height (for aspect ratio)
@@ -1030,10 +1095,10 @@ export class AsciliLiveRecorder {
    *   opts.onError(msg)
    */
   startRecording(cfg, opts = {}) {
-    const { targetFps = 30, resolution = 'auto',
+    const { targetFps = 60, resolution = 'auto',
             videoWidth = 640, videoHeight = 480,
-                onComplete, onError, writable = null,
-                maxBufferedBytes = 256 * 1024 * 1024 } = opts;
+            onComplete, onError, writable = null,
+            maxBufferedBytes = Infinity } = opts;
 
     if (this._running) return;
     this._writable = writable;
@@ -1042,6 +1107,8 @@ export class AsciliLiveRecorder {
     this._bufferedBytes = 0;
     this._maxBufferedBytes = maxBufferedBytes;
     this._outputError = null;
+
+    const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick MIME
     const candidates = [
@@ -1059,9 +1126,9 @@ export class AsciliLiveRecorder {
 
     if (asciiCanvas && asciiCanvas.width > 0 && asciiCanvas.height > 0) {
       try {
-        stream = asciiCanvas.captureStream(targetFps);
+        stream = asciiCanvas.captureStream(targetFpsVal);
         this._directStream = true;
-      } catch (e) {
+      } catch {
         stream = null;
       }
     }
@@ -1080,7 +1147,7 @@ export class AsciliLiveRecorder {
       this._canvas.height = makeEven(rows * fontSize);
 
       try {
-        stream = this._canvas.captureStream(targetFps);
+        stream = this._canvas.captureStream(targetFpsVal);
       } catch (e) {
         onError?.('captureStream not supported: ' + e.message); return;
       }
@@ -1090,15 +1157,18 @@ export class AsciliLiveRecorder {
     try {
       const sourceVideo = document.getElementById('sourceVideo');
       if (sourceVideo) {
-        if (sourceVideo.captureStream) {
+        if (sourceVideo.srcObject) {
+          const audioTracks = sourceVideo.srcObject.getAudioTracks();
+          if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
+        } else if (sourceVideo.captureStream) {
           const audioTracks = sourceVideo.captureStream().getAudioTracks();
-          if (audioTracks.length > 0) stream.addTrack(audioTracks[0]);
+          if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
         } else if (sourceVideo.mozCaptureStream) {
           const audioTracks = sourceVideo.mozCaptureStream().getAudioTracks();
-          if (audioTracks.length > 0) stream.addTrack(audioTracks[0]);
+          if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
         }
       }
-    } catch (e) {}
+    } catch {}
 
     const effectiveW = asciiCanvas?.width || this._canvas.width || 1280;
     const bitsPerSecond = effectiveW >= 3000 ? 16_000_000
@@ -1110,6 +1180,15 @@ export class AsciliLiveRecorder {
     this._stream = stream;
     this._startWall = performance.now();
 
+    // Acquire wake lock to keep screen and recording active limitlessly
+    try {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => {
+          this._wakeLock = lock;
+        }).catch(() => {});
+      }
+    } catch {}
+
     try {
       this._recorder = new MediaRecorder(stream, {
         mimeType: this._mimeType,
@@ -1117,6 +1196,8 @@ export class AsciliLiveRecorder {
       });
     } catch (e) {
       this._running = false;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
       this._stream?.getTracks().forEach(track => track.stop());
       this._stream = null;
       this._writable?.abort().catch(() => {});
@@ -1146,18 +1227,13 @@ export class AsciliLiveRecorder {
         return;
       }
       this._bufferedBytes += e.data.size;
-      if (this._bufferedBytes > this._maxBufferedBytes) {
-        this._outputError = new Error('The video exceeded the in-memory recording limit. Use a browser with direct-to-file saving or record for less time.');
-        this._running = false;
-        if (this._recorder?.state !== 'inactive') this._recorder.stop();
-        onError?.(this._outputError.message);
-        return;
-      }
       this._chunks.push(e.data);
     };
 
     this._recorder.onstop = async () => {
       this._elapsed = (performance.now() - this._startWall) / 1000;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
       this._stream?.getTracks().forEach(track => track.stop());
       this._stream = null;
       this._running = false;
@@ -1208,6 +1284,8 @@ export class AsciliLiveRecorder {
   /** Stop recording and trigger onComplete. */
   stopRecording() {
     this._running = false;
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
     if (this._recorder && this._recorder.state !== 'inactive') {
       this._recorder.stop();
     }

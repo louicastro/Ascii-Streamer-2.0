@@ -249,7 +249,7 @@ function readConfig() {
   cfg.invertChars = checkInvert?.checked ?? false;
   cfg.cols        = Math.min(1000, Math.max(20, parseInt(rangeCols?.value, 10) || cfg.cols));
   cfg.fontSize    = Math.min(30, Math.max(1, parseInt(rangeFontSize?.value, 10) || cfg.fontSize));
-  cfg.fps         = 60;
+  cfg.fps         = Math.min(120, Math.max(1, parseFloat(selectFps?.value) || 60));
   if (rangeBrightness) {
     const value = parseInt(rangeBrightness.value, 10);
     cfg.brightness = legacyCenteredSliders ? value - 100 : value;
@@ -320,7 +320,7 @@ function applyPreset(name) {
   if (valCols) valCols.textContent = presetCols;
   if (rangeFontSize) rangeFontSize.value = presetFontSize;
   if (valFontSize) valFontSize.textContent = presetFontSize;
-  if (selectFps) selectFps.value = p.fps;
+  if (selectFps) selectFps.value = String(p.fps);
   if (rangeBrightness) rangeBrightness.value = p.brightness + (legacyCenteredSliders ? 100 : 0);
   if (valBrightness) valBrightness.textContent = p.brightness;
   if (rangeContrast) rangeContrast.value = p.contrast + (legacyCenteredSliders ? 100 : 0);
@@ -469,6 +469,7 @@ function seekToPosition(e) {
 
 const liveRecorder = new AsciliLiveRecorder();
 let recTimerInterval = null;
+let liveTemporaryExport = null;
 
 function fmtRecTime(s) {
   const m = Math.floor(s / 60);
@@ -483,44 +484,71 @@ async function startLiveRecording() {
   readConfig();
   const mimeType = detectMime();
   const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+  const recordExtension = dlRecordVideo?.querySelector('.dl-ext');
+  if (recordExtension) recordExtension.textContent = `.${extension}`;
   const filename = `ascili-rec-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
   let writable = null;
-  try {
-    writable = await chooseVideoFile(mimeType, filename);
-    if (writable === false) return;
-  } catch (error) {
-    showToast('Could not open output file: ' + error.message);
-    return;
+  let temporaryExport = null;
+
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      writable = await chooseVideoFile(mimeType, filename);
+      if (writable === false) return;
+    } catch {
+      writable = null;
+    }
+  }
+
+  if (!writable) {
+    temporaryExport = await createTemporaryExportFile(filename, mimeType, 0);
+    if (temporaryExport) writable = temporaryExport.writable;
   }
 
   liveRecorder.startRecording(cfg, {
-    targetFps: cfg.fps,
+    targetFps: cfg.fps || 60,
     resolution: '1080p',
     videoWidth:  sourceVideo.videoWidth  || 640,
     videoHeight: sourceVideo.videoHeight || 480,
     writable,
     onComplete(blob, mimeType, result) {
-      if (result?.savedToDisk) {
+      if (temporaryExport) {
+        temporaryExport.prepareDownload().then(() => {
+          liveTemporaryExport = temporaryExport;
+          updateRecUI(false);
+          showToast('Recording ready; choose Download Recorded Video to save it');
+        }).catch(error => {
+          temporaryExport.discard();
+          showToast('Could not prepare the recording download: ' + error.message);
+          updateRecUI(false);
+        });
+      } else if (result?.savedToDisk) {
         showToast('Recording saved to the selected file');
-      } else {
+        updateRecUI(false);
+      } else if (blob) {
         download(filename, blob, mimeType);
         showToast('Recording saved — ' + fmtBytes(blob.size));
+        updateRecUI(false);
       }
-      updateRecUI(false);
     },
     onError(msg) {
+      temporaryExport?.discard();
+      if (temporaryExport === liveTemporaryExport) liveTemporaryExport = null;
       showToast('Recording error: ' + msg);
       updateRecUI(false);
     },
   });
 
+  if (!liveRecorder.running) return;
   updateRecUI(true);
-  showToast('Recording started');
+  showToast(temporaryExport
+    ? 'Recording limitless video; click Stop & Download when done'
+    : writable
+    ? 'Recording limitless video to selected file'
+    : 'Recording limitless video');
 }
 
 function stopLiveRecording() {
   liveRecorder.stopRecording();
-  // onComplete callback will handle download and UI
 }
 
 function updateRecUI(isRecording) {
@@ -530,7 +558,9 @@ function updateRecUI(isRecording) {
   if (dlRecordVideo) {
     dlRecordVideo.classList.toggle('recording', isRecording);
     if (dlRecordLabel) {
-      dlRecordLabel.textContent = isRecording ? 'Stop & Download Video' : 'Record Rendered Video';
+      dlRecordLabel.textContent = isRecording
+        ? 'Stop & Download Video'
+        : liveTemporaryExport ? 'Download Recorded Video' : 'Record Rendered Video';
     }
   }
 
@@ -545,12 +575,27 @@ function updateRecUI(isRecording) {
   }
 }
 
-btnRecord.addEventListener('click', () => {
+async function handleLiveRecordAction() {
+  if (liveTemporaryExport) {
+    try {
+      liveTemporaryExport.download();
+      liveTemporaryExport = null;
+      updateRecUI(false);
+      showToast('Recording download started');
+    } catch (error) {
+      showToast('Could not download recording: ' + error.message);
+    }
+    return;
+  }
   if (liveRecorder.running) {
     stopLiveRecording();
   } else {
-    startLiveRecording();
+    await startLiveRecording();
   }
+}
+
+btnRecord.addEventListener('click', () => {
+  handleLiveRecordAction();
 });
 
 // ─── Render Loop ─────────────────────────────────────────────────────────────
@@ -983,7 +1028,8 @@ selectCharSet.addEventListener('change', () => {
 });
 inputCustomChars?.addEventListener('input', () => readConfig());
 checkInvert?.addEventListener('change', () => readConfig());
-selectFps.addEventListener('change', () => readConfig());
+selectFps?.addEventListener('change', () => readConfig());
+selectFps?.addEventListener('input', () => readConfig());
 
 // ─── Preset buttons ───────────────────────────────────────────────────────────
 
@@ -1158,11 +1204,7 @@ if (dlRecordVideo) {
   dlRecordVideo.addEventListener('click', () => {
     dlMenu.classList.remove('open');
     btnDownload.classList.remove('open');
-    if (liveRecorder.running) {
-      stopLiveRecording();
-    } else {
-      startLiveRecording();
-    }
+    handleLiveRecordAction();
   });
 }
 dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
@@ -1310,7 +1352,7 @@ function updateLongVideoWarning() {
   }
   const duration = cvSourceVideo.duration;
   const srt = cvExportType.value === 'srt';
-  const selectedFps = parseInt(cvCfgFpsOverride.value, 10) || 60;
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || 60;
   const fps = srt ? SRT_TARGET_FPS : selectedFps;
   const cols = srt
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight)
@@ -1318,21 +1360,9 @@ function updateLongVideoWarning() {
   const size = srt
     ? estimateSrtBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps)
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
-  const memoryLimit = (srt ? 96 : 192) * 1024 * 1024;
-  const needsDirectFile = size > memoryLimit;
-  if (duration <= 300 && !needsDirectFile) {
-    cvWarning.style.display = 'none';
-    return;
-  }
   cvWarning.style.display = 'flex';
   const summary = `${fmtTime(duration)} at ${fps} FPS is about ${Math.ceil(duration * fps).toLocaleString()} frames; estimated output about ${fmtBytes(size)}.`;
-  if (needsDirectFile && typeof window.showSaveFilePicker !== 'function') {
-    cvWarningText.textContent = `${summary} This export needs direct-to-disk saving. In Brave, open brave://flags/#file-system-access-api, enable “File System Access API”, and relaunch Brave; or use desktop Chrome or Edge.`;
-  } else if (needsDirectFile) {
-    cvWarningText.textContent = `${summary} It will stream straight to the file you choose, so keep the tab open until export completes.`;
-  } else {
-    cvWarningText.textContent = `${summary} Choose a file location when export starts and keep the tab open until it completes.`;
-  }
+  cvWarningText.textContent = `${summary} Solid ${fps} FPS export ready. Keep tab open during conversion.`;
 }
 
 function charSetLabel(cs) {
@@ -1366,49 +1396,73 @@ async function chooseVideoFile(mimeType, suggestedName) {
   }
 }
 
-async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes) {
-  if (!navigator.storage?.getDirectory) return null;
-  try {
-    const estimate = await navigator.storage.estimate?.();
-    const available = Number.isFinite(estimate?.quota) && Number.isFinite(estimate?.usage)
-      ? estimate.quota - estimate.usage
-      : Infinity;
-    if (available < expectedBytes * 1.1) return null;
-
-    const root = await navigator.storage.getDirectory();
-    const tempName = `.ascili-${Date.now()}-${suggestedName}`;
-    const handle = await root.getFileHandle(tempName, { create: true });
-    const stream = await handle.createWritable();
-    let closed = false;
-    let downloadFile = null;
-    let downloadStarted = false;
-    const cleanup = () => root.removeEntry(tempName).catch(() => {});
-    return {
-      writable: {
-        write: chunk => stream.write(chunk),
-        close: async () => { await stream.close(); closed = true; },
-        abort: async () => {
-          try { if (!closed) await stream.abort(); } finally { await cleanup(); }
+async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes = 0) {
+  if (navigator.storage?.getDirectory) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const tempName = `.ascili-${Date.now()}-${suggestedName}`;
+      const handle = await root.getFileHandle(tempName, { create: true });
+      const stream = await handle.createWritable();
+      let closed = false;
+      let downloadFile = null;
+      let downloadStarted = false;
+      const cleanup = () => root.removeEntry(tempName).catch(() => {});
+      return {
+        writable: {
+          write: chunk => stream.write(chunk),
+          close: async () => { await stream.close(); closed = true; },
+          abort: async () => {
+            try { if (!closed) await stream.abort(); } finally { await cleanup(); }
+          },
         },
-      },
-      async prepareDownload() {
-        if (!closed) throw new Error('Temporary export file is not ready yet.');
-        downloadFile = await handle.getFile();
-      },
-      download() {
-        if (!downloadFile) throw new Error('Temporary export file is not ready to download.');
-        download(suggestedName, downloadFile, mimeType);
-        downloadStarted = true;
-        window.setTimeout(cleanup, 60 * 60 * 1000);
-      },
-      cleanup,
-      discard() {
-        if (!downloadStarted) return cleanup();
-      },
-    };
-  } catch {
-    return null;
+        async prepareDownload() {
+          if (!closed) throw new Error('Temporary export file is not ready yet.');
+          downloadFile = await handle.getFile();
+        },
+        download() {
+          if (!downloadFile) throw new Error('Temporary export file is not ready to download.');
+          download(suggestedName, downloadFile, mimeType);
+          downloadStarted = true;
+          window.setTimeout(cleanup, 60 * 60 * 1000);
+        },
+        cleanup,
+        discard() {
+          if (!downloadStarted) return cleanup();
+        },
+      };
+    } catch {
+      // Fallback
+    }
   }
+
+  // Resilient fallback: streaming chunk store
+  const chunks = [];
+  let closed = false;
+  let finalBlob = null;
+  let downloadStarted = false;
+  return {
+    writable: {
+      write: chunk => { chunks.push(chunk); return Promise.resolve(); },
+      close: () => {
+        closed = true;
+        finalBlob = new Blob(chunks, { type: mimeType });
+        return Promise.resolve();
+      },
+      abort: () => { chunks.length = 0; return Promise.resolve(); },
+    },
+    async prepareDownload() {
+      if (!closed) throw new Error('Export is not ready yet.');
+      if (!finalBlob) finalBlob = new Blob(chunks, { type: mimeType });
+    },
+    download() {
+      if (!finalBlob) throw new Error('Export is not ready to download.');
+      download(suggestedName, finalBlob, mimeType);
+      downloadStarted = true;
+      chunks.length = 0;
+    },
+    cleanup() { chunks.length = 0; },
+    discard() { chunks.length = 0; },
+  };
 }
 
 function drawConverterPreview(videoEl) {
@@ -1427,6 +1481,13 @@ function cvRefreshSettings() {
   const mime = detectMime();
   cvCfgFmt.textContent   = mime.includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)';
   cvMimeType = mime;
+  if (cvCfgFpsOverride && cfg.fps) {
+    const fpsVal = String(cfg.fps);
+    const hasOption = Array.from(cvCfgFpsOverride.options).some(o => o.value === fpsVal);
+    if (hasOption) {
+      cvCfgFpsOverride.value = fpsVal;
+    }
+  }
   updateExportModeUI();
 }
 
@@ -1458,10 +1519,13 @@ function cvSetFile(file) {
   cvSourceVideo.preload = 'auto';
   cvSourceVideo.playsInline = true;
   cvSourceVideo.style.position = 'fixed';
-  cvSourceVideo.style.left     = '-9999px';
-  cvSourceVideo.style.top      = '-9999px';
-  cvSourceVideo.style.width    = '16px';
-  cvSourceVideo.style.height   = '16px';
+  cvSourceVideo.style.left     = '0px';
+  cvSourceVideo.style.top      = '0px';
+  cvSourceVideo.style.width    = '160px';
+  cvSourceVideo.style.height   = '90px';
+  cvSourceVideo.style.opacity  = '0.001';
+  cvSourceVideo.style.pointerEvents = 'none';
+  cvSourceVideo.style.zIndex   = '-999';
   cvSourceVideo.src     = URL.createObjectURL(file);
   document.body.appendChild(cvSourceVideo);
 
@@ -1598,7 +1662,7 @@ cvStart.addEventListener('click', async () => {
   updateExportModeUI();
   updateLongVideoWarning();
 
-  const selectedFps = parseInt(cvCfgFpsOverride.value, 10) || 60;
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || 60;
   const resolution = cvCfgRes.value || '1080p';
   const exportType = cvExportType.value;
   const isSrt = exportType === 'srt';
@@ -1620,76 +1684,21 @@ cvStart.addEventListener('click', async () => {
   const filename = `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
   let writable = null;
   let temporaryExport = null;
-  let maxBufferedBytes = null;
-  const allowBufferedExport = () => {
-    // The fallback is intentionally opt-in: a Blob export retains the encoded
-    // video in memory and may need substantially more RAM than its final size.
-    const hardLimit = 1536 * 1024 * 1024;
-    if (isSrt || estimatedOutputBytes > hardLimit) return false;
-    const bufferLimit = Math.min(hardLimit, Math.max(memoryExportLimit, Math.ceil(estimatedOutputBytes * 1.2)));
-    const requiredGiB = ((bufferLimit * 2) / (1024 ** 3)).toFixed(1);
-    if (!confirm(
-      `This browser cannot write directly to a file or temporary disk storage. Retry by buffering the export before downloading? It is estimated at ${fmtBytes(estimatedOutputBytes)} and may need around ${requiredGiB} GB of free memory. The tab may become unresponsive.`
-    )) return false;
-    maxBufferedBytes = bufferLimit;
-    return true;
-  };
-  if (estimatedOutputBytes > memoryExportLimit && typeof window.showSaveFilePicker !== 'function') {
-    temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
-    if (temporaryExport) writable = temporaryExport.writable;
-  }
-  if (estimatedOutputBytes > memoryExportLimit && !writable
-      && typeof window.showSaveFilePicker !== 'function' && !allowBufferedExport()) {
-    cvProgressSection.style.display = 'none';
-    cvDoneSection.style.display = 'none';
-    cvStart.style.display = '';
-    cvStop.style.display = 'none';
-    cvWarning.style.display = 'flex';
-    cvWarningText.textContent = isSrt
-      ? `${fmtBytes(estimatedOutputBytes)} needs temporary disk storage for this subtitle export. Open this page in desktop Chrome or Edge outside the editor preview and retry.`
-      : estimatedOutputBytes > 1536 * 1024 * 1024
-      ? `${fmtBytes(estimatedOutputBytes)} exceeds the in-browser fallback limit. Open this page in desktop Chrome or Edge outside the editor preview and save directly to disk.`
-      : `${fmtBytes(estimatedOutputBytes)} could not be stored on temporary browser disk. Open this page in desktop Chrome or Edge, or retry and accept the memory warning.`;
-    showToast('Export was not started');
-    return;
-  }
-  try {
-    if (!writable) {
+
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
       writable = await chooseVideoFile(mimeType, filename);
-      if (writable === false) return;
-    }
-  } catch (error) {
-    const message = error?.message || String(error);
-    const fileWriteDenied = error?.name === 'SecurityError'
-      || error?.name === 'NotAllowedError'
-      || /createWritable|not allowed by the user agent|current context/i.test(message);
-    if (fileWriteDenied && estimatedOutputBytes > memoryExportLimit) {
-      temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
-      if (temporaryExport) {
-        writable = temporaryExport.writable;
-        showToast('Using temporary browser storage; click Download when the export finishes.');
-      }
-    }
-    if (fileWriteDenied && writable) {
-      // Use origin-private storage when the editor blocks native file writes.
-    } else if (fileWriteDenied && estimatedOutputBytes <= memoryExportLimit) {
-      // Embedded browsers may expose the picker but deny writes. Small exports
-      // can still complete through the regular download flow without a file handle.
+      if (writable === false) return; // User cancelled picker
+    } catch {
       writable = null;
-      showToast('This browser blocks direct saving; the finished file will download when ready.');
-    } else if (fileWriteDenied && allowBufferedExport()) {
-      writable = null;
-      showToast('Retrying without direct file access; the finished video will download when ready.');
-    } else if (fileWriteDenied) {
-      cvShowExportError(isSrt
-        ? `This browser tab blocks direct file writing and temporary disk storage is unavailable. Open this page in desktop Chrome or Edge and retry the ${fmtBytes(estimatedOutputBytes)} subtitle export.`
-        : estimatedOutputBytes > 1536 * 1024 * 1024
-        ? `This browser tab blocks direct file writing, and ${fmtBytes(estimatedOutputBytes)} exceeds the in-browser fallback limit. Open this page in desktop Chrome or Edge outside the editor preview and retry.`
-        : `This browser tab blocks direct file writing and temporary browser storage is unavailable. Retry and accept the memory warning, or open in desktop Chrome or Edge.`);
-      return;
-    } else {
-      cvShowExportError('Could not open output file: ' + message);
-      return;
+    }
+  }
+
+  if (!writable) {
+    temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
+    if (temporaryExport) {
+      writable = temporaryExport.writable;
+      showToast(`Exporting at ${targetFps} FPS; click Download when complete.`);
     }
   }
   cvProgressSection.style.display = 'block';
@@ -1774,7 +1783,7 @@ cvStart.addEventListener('click', async () => {
     targetFps,
     resolution,
     writable,
-    ...(maxBufferedBytes ? { maxBufferedBytes } : {}),
+    maxBufferedBytes: Infinity,
     onProgress(pct) {
       cvCurrentProgress = pct;
       const frameNum = Math.round(pct * totalFrames);
@@ -1869,6 +1878,11 @@ cvSave.addEventListener('click', () => {
 
 cvConvertAnother.addEventListener('click', () => {
   cvResetUI();
+  if (cvSourceVideo) {
+    cvSourceVideo.pause();
+    URL.revokeObjectURL(cvSourceVideo.src);
+    cvSourceVideo.remove();
+  }
   cvFile = null;
   cvSourceVideo = null;
   cvFileInfo.textContent = 'No file loaded';

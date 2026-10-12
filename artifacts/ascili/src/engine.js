@@ -769,17 +769,19 @@ export class AsciliEngine {
     this._prevCharGrid = new Uint8Array(0);
   }
 
+  get gpuCanvas() { return this._gpuCanvas; }
+
   renderFrame(videoEl, targetCanvas, config) {
     if (!videoEl) return { rows: 0, cols: 0, chars: 0 };
 
     const vw = videoEl.videoWidth  || videoEl.width  || 640;
     const vh = videoEl.videoHeight || videoEl.height || 480;
+    const cellRatio = (vh / vw) * 0.45;
     const requestedCols = Math.min(1000, Math.max(20, Math.round(config.cols || 80)));
-    const cellRatio = (vh / vw) * 0.50;
     const maxColsForSafeFrame = Math.floor(Math.sqrt(500_000 / Math.max(cellRatio, 0.01)));
-    const cols = Math.min(requestedCols, Math.max(20, maxColsForSafeFrame));
+    const cols = config.cols ? Math.min(1000, Math.max(20, Math.round(config.cols))) : Math.min(requestedCols, Math.max(20, maxColsForSafeFrame));
 
-    const rows = Math.max(1, Math.round(cols * (vh / vw) * 0.50));
+    const rows = config.rows ?? Math.max(1, Math.round(cols * (vh / vw) * 0.45));
     const totalCells = rows * cols;
 
     this._lastCols   = cols;
@@ -828,11 +830,11 @@ export class AsciliEngine {
         }
       }
 
-      // Avoid a synchronous per-character fallback when the grid is too large.
-      if (!rendered && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
+      // If syncOnly is requested (e.g. video export), avoid asynchronous worker
+      if (!rendered && !config.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
         this._initFallbackRenderer(targetCanvas);
       }
-      if (!rendered && this._canvasWorker && totalCells <= 500_000) {
+      if (!rendered && !config.syncOnly && this._canvasWorker && totalCells <= 500_000) {
         rendered = this._canvasWorker.render(videoEl, cols, rows, this._atlas, config);
       }
       if (!rendered && this._canvasWorker?.failed) {
@@ -841,10 +843,16 @@ export class AsciliEngine {
         this._canvasWorkerFailed = true;
         this._initFallbackRenderer(targetCanvas);
       }
-      if (!rendered && this._canvas2d && totalCells <= 250_000) {
-        this._renderFallback2D(videoEl, cols, rows, config);
-        rendered = true;
-      } else if (!rendered) {
+      if (!rendered) {
+        if (!this._canvas2d) {
+          try { this._canvas2d = new AsciliCanvas2DRenderer(targetCanvas); } catch { this._canvas2d = null; }
+        }
+        if (this._canvas2d) {
+          this._renderFallback2D(videoEl, cols, rows, config);
+          rendered = true;
+        }
+      }
+      if (!rendered) {
         return { rows, cols, chars: totalCells, rendered: false };
       }
     }

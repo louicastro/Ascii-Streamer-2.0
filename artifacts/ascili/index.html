@@ -213,8 +213,14 @@
           </div>
 
           <div class="setting-row">
-            <label class="setting-label">Frame Rate</label>
-            <input class="setting-input" id="inputFps" type="number" min="60" max="60" step="1" value="60" readonly aria-label="Frame rate fixed at 60 frames per second" />
+            <label class="setting-label" for="selectFps">Frame Rate</label>
+            <select class="setting-select" id="selectFps" data-testid="select-fps" aria-label="Target render frame rate">
+              <option value="15">15 FPS</option>
+              <option value="24">24 FPS</option>
+              <option value="29.5">29.5 FPS</option>
+              <option value="30">30 FPS</option>
+              <option value="60" selected>60 FPS</option>
+            </select>
           </div>
 
           <div class="setting-row">
@@ -277,6 +283,10 @@
             </label>
             <label class="cv-stat-row" for="cvCfgFpsOverride"><span>Frame rate</span>
               <select class="setting-select cv-select" id="cvCfgFpsOverride">
+                <option value="15">15 FPS</option>
+                <option value="24">24 FPS</option>
+                <option value="29.5">29.5 FPS</option>
+                <option value="30">30 FPS</option>
                 <option value="60" selected>60 FPS</option>
               </select>
             </label>
