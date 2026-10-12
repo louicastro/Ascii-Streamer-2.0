@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ASCILI — ASCII Video Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/style.css" />
+  <link rel="stylesheet" href="./src/website-upgrade.css" />
+</head>
+<body>
+
+  <!-- Top bar -->
+  <header class="topbar" id="topbar">
+    <div class="logo">&gt;ASCILI_</div>
+
+    <!-- Mobile menu toggle -->
+    <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+
+    <div class="preset-bar" id="presetBar">
+      <span class="preset-label">PRESETS</span>
+      <button class="preset-btn active" data-preset="classic" data-testid="preset-classic">[1] Classic Green</button>
+      <button class="preset-btn" data-preset="matrix" data-testid="preset-matrix">[2] Matrix Rain</button>
+      <button class="preset-btn" data-preset="truecolor" data-testid="preset-truecolor">[3] True Color</button>
+      <button class="preset-btn" data-preset="braille" data-testid="preset-braille">[4] Braille Art</button>
+      <button class="preset-btn" data-preset="blocks" data-testid="preset-blocks">[5] Block Pixels</button>
+    </div>
+
+    <div class="source-bar">
+      <button class="source-btn" id="btnWebcam" data-testid="btn-webcam">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        Webcam
+      </button>
+      <button class="source-btn" id="btnScreen" data-testid="btn-screen">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Screen
+      </button>
+      <button class="source-btn" id="btnFile" data-testid="btn-file">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        File
+      </button>
+      <input type="file" id="fileInput" accept="video/*" style="display:none" data-testid="input-file" />
+
+      <!-- Download dropdown -->
+      <div class="dl-wrap" id="dlWrap">
+        <button class="source-btn dl-main-btn" id="btnDownload" data-testid="btn-download">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+          <svg class="dl-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="dl-menu" id="dlMenu">
+          <button class="dl-item" id="dlTxt" data-testid="dl-txt">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Plain Text  <span class="dl-ext">.txt</span>
+          </button>
+          <button class="dl-item" id="dlHtml" data-testid="dl-html">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Styled HTML  <span class="dl-ext">.html</span>
+          </button>
+          <button class="dl-item" id="dlPng" data-testid="dl-png">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            Screenshot  <span class="dl-ext">.png</span>
+          </button>
+          <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
+            <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+            <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
+          </button>
+          <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            Convert Full Video File  <span class="dl-ext">.mp4</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <main class="main-layout" id="mainLayout">
+
+    <!-- ASCII output area -->
+    <div class="ascii-container" id="asciiContainer">
+      <canvas class="ascii-canvas" id="asciiCanvas"></canvas>
+      <div class="ascii-output" id="asciiOutput" style="display:none"></div>
+
+      <!-- Scanlines overlay (optional CRT effect) -->
+      <div class="scanlines" id="scanlines"></div>
+
+      <div class="waiting-overlay" id="waitingOverlay">
+        <div class="waiting-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="waiting-text">READY FOR VIDEO SIGNAL</div>
+        <div class="waiting-hint">Choose webcam, screen, or file to begin your live ASCII stream.</div>
+        <div class="waiting-callout"><span class="waiting-badge">LIVE</span> Webcam • Screen • File</div>
+      </div>
+
+      <!-- Drag & drop overlay -->
+      <div class="drop-overlay" id="dropOverlay">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <div class="drop-text">DROP VIDEO FILE</div>
+      </div>
+
+      <!-- Source preview PiP -->
+      <div class="source-preview" id="sourcePreview">
+        <video id="sourceVideo" autoplay muted playsinline></video>
+        <div class="source-preview-label" id="sourceLabel">SOURCE</div>
+        <div class="source-preview-handle">⠿</div>
+      </div>
+
+      <!-- Fullscreen & pause controls overlay -->
+      <div class="output-controls">
+        <button class="icon-btn rec-btn" id="btnRecord" data-testid="btn-record" title="Record ASCII (V)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+        </button>
+        <button class="icon-btn" id="btnPause" data-testid="btn-pause" title="Pause (Space)">
+          <svg id="iconPause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <svg id="iconPlay" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><polygon points="5,3 19,12 5,21"/></svg>
+        </button>
+        <button class="icon-btn" id="btnFullscreen" data-testid="btn-fullscreen" title="Fullscreen (F)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3M3 8V5a2 2 0 0 1 2-2h3"/></svg>
+        </button>
+        <button class="icon-btn" id="btnScanlines" data-testid="btn-scanlines" title="CRT Effect (G)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20M2 13h20M2 18h20"/></svg>
+        </button>
+        <button class="icon-btn" id="btnSettings" data-testid="btn-settings" title="Settings (S)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </button>
+      </div>
+
+      <!-- Recording indicator -->
+      <div class="rec-indicator" id="recIndicator">
+        <span class="rec-dot"></span>
+        <span class="rec-label">REC</span>
+        <span class="rec-timer" id="recTimer">00:00</span>
+      </div>
+
+      <!-- Video timeline (for file playback) -->
+      <div class="vt-bar" id="vtBar">
+        <div class="vt-track" id="vtTrack">
+          <div class="vt-fill" id="vtFill"></div>
+          <div class="vt-thumb" id="vtThumb"></div>
+        </div>
+        <div class="vt-labels">
+          <span class="vt-time" id="vtTime">0:00</span>
+          <span class="vt-speed" id="vtSpeed"></span>
+          <span class="vt-duration" id="vtDuration">0:00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings panel -->
+    <aside class="settings-panel" id="settingsPanel">
+      <div class="settings-header">
+        <span class="settings-title">SYSTEM.CFG</span>
+        <button class="icon-btn" id="btnResetSettings" data-testid="btn-reset-settings" title="Reset Settings (R)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        </button>
+      </div>
+
+      <div class="settings-body">
+
+        <div class="settings-section">
+          <div class="section-label">RENDER MODE</div>
+
+          <div class="setting-row">
+            <label class="setting-label">Color Mode</label>
+            <select class="setting-select" id="selectColorMode" data-testid="select-color-mode">
+              <option value="monochrome">Monochrome</option>
+              <option value="grayscale">Grayscale</option>
+              <option value="ansi16">ANSI 16</option>
+              <option value="ansi256">ANSI 256</option>
+              <option value="truecolor">True Color</option>
+            </select>
+          </div>
+
+          <!-- Monochrome color swatches -->
+          <div class="setting-row color-swatch-row" id="colorSwatchRow">
+            <label class="setting-label">Glow Color</label>
+            <div class="color-swatches">
+              <button class="color-swatch active" data-color="#39ff52" style="background:#39ff52" title="Green"></button>
+              <button class="color-swatch" data-color="#ffbb00" style="background:#ffbb00" title="Amber"></button>
+              <button class="color-swatch" data-color="#00f5ff" style="background:#00f5ff" title="Cyan"></button>
+              <button class="color-swatch" data-color="#ff4444" style="background:#ff4444" title="Red"></button>
+              <button class="color-swatch" data-color="#ffffff" style="background:#ffffff" title="White"></button>
+              <button class="color-swatch" data-color="#c084fc" style="background:#c084fc" title="Purple"></button>
+              <button class="color-swatch" data-color="#ff6b9d" style="background:#ff6b9d" title="Pink"></button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Character Set</label>
+            <select class="setting-select" id="selectCharSet" data-testid="select-charset">
+              <option value="standard">Standard</option>
+              <option value="extended">Extended</option>
+              <option value="block">Block</option>
+              <option value="minimal">Minimal</option>
+              <option value="braille">Braille</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="rangeCols">Output Width <span class="setting-value"><span id="valCols">80</span> cols</span></label>
+            <input class="setting-range" id="rangeCols" type="range" min="20" max="1000" step="10" value="80" aria-label="Output width in columns" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="rangeFontSize">Font Size <span class="setting-value"><span id="valFontSize">10</span> px</span></label>
+            <input class="setting-range" id="rangeFontSize" type="range" min="1" max="30" step="1" value="10" aria-label="Font size in pixels" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Frame Rate</label>
+            <input class="setting-input" id="inputFps" type="number" min="60" max="60" step="1" value="60" readonly aria-label="Frame rate fixed at 60 frames per second" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Brightness</label>
+            <input class="setting-range" id="inputBrightness" type="range" min="0" max="200" value="100" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Contrast</label>
+            <input class="setting-range" id="inputContrast" type="range" min="0" max="200" value="100" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Gamma</label>
+            <input class="setting-range" id="inputGamma" type="range" min="40" max="220" value="100" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label">Edge Detection</label>
+            <input class="setting-range" id="inputEdge" type="range" min="0" max="100" value="45" />
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </main>
+
+  <div class="cv-overlay" id="cvOverlay" aria-hidden="true">
+    <section class="cv-panel" role="dialog" aria-modal="true" aria-labelledby="cvTitle">
+      <header class="cv-header">
+        <div class="cv-title" id="cvTitle">VIDEO EXPORT</div>
+        <button class="icon-btn" id="cvClose" type="button" aria-label="Close video export">×</button>
+      </header>
+
+      <div class="cv-body">
+        <section class="cv-section">
+          <div class="cv-section-label">SOURCE VIDEO</div>
+          <div class="cv-file-row">
+            <span class="cv-file-info" id="cvFileInfo">No file loaded</span>
+            <button class="cv-btn-secondary" id="cvPickFile" type="button">CHOOSE FILE</button>
+            <input id="cvFileInput" type="file" accept="video/*,.mkv,.avi,.mov,.mp4,.webm" hidden />
+          </div>
+          <div class="cv-drop-zone" id="cvDropZone" tabindex="0">Drop a video here or choose a file above</div>
+          <div class="cv-meta" id="cvMeta"></div>
+        </section>
+
+        <section class="cv-section">
+          <div class="cv-section-label">OUTPUT SETTINGS</div>
+          <div class="cv-grid">
+            <div class="cv-stat-row"><span>Color mode</span><span class="cv-val" id="cvCfgColor">MONOCHROME</span></div>
+            <div class="cv-stat-row"><span>Character set</span><span class="cv-val" id="cvCfgChars">Standard</span></div>
+            <div class="cv-stat-row"><span>Output width</span><span class="cv-val" id="cvCfgCols">80 cols</span></div>
+            <div class="cv-stat-row"><span>Font size</span><span class="cv-val" id="cvCfgFont">10px</span></div>
+            <div class="cv-stat-row"><span>Format</span><span class="cv-val" id="cvCfgFmt">WebM</span></div>
+            <label class="cv-stat-row" for="cvCfgRes"><span>Resolution</span>
+              <select class="setting-select cv-select" id="cvCfgRes">
+                <option value="auto">Auto</option><option value="720p">720p</option>
+                <option value="1080p" selected>1080p</option>
+              </select>
+            </label>
+            <label class="cv-stat-row" for="cvCfgFpsOverride"><span>Frame rate</span>
+              <select class="setting-select cv-select" id="cvCfgFpsOverride">
+                <option value="60" selected>60 FPS</option>
+              </select>
+            </label>
+            <label class="cv-stat-row" for="cvExportType"><span>Export type</span>
+              <select class="setting-select cv-select" id="cvExportType">
+                <option value="video" selected>Rendered video</option>
+                <option value="srt">Subtitles (.srt)</option>
+              </select>
+            </label>
+          </div>
+          <div class="cv-hint" id="cvSrtNote" style="display:none">SRT output is compact text art. Its column count and frame rate are optimized for subtitle players.</div>
+          <div class="cv-warning" id="cvWarning" style="display:none">
+            <span aria-hidden="true">⚠</span><span id="cvWarningText"></span>
+          </div>
+        </section>
+
+        <section class="cv-section" id="cvProgressSection" style="display:none">
+          <div class="cv-section-label">ENCODING PROGRESS</div>
+          <div class="cv-error" id="cvError" role="alert" hidden></div>
+          <div class="cv-progress-bar"><div class="cv-progress-fill" id="cvProgressFill"></div></div>
+          <div class="cv-progress-meta">
+            <span id="cvProgressPct">0%</span>
+            <span id="cvProgressFrames"></span>
+            <span class="cv-speed-badge" id="cvSpeedBadge"></span>
+            <span id="cvProgressTime"></span>
+            <span id="cvProgressEta"></span>
+          </div>
+          <div class="cv-preview-row">
+            <canvas class="cv-preview-canvas" id="cvPreviewCanvas" width="640" height="360"></canvas>
+            <span class="cv-preview-label">RENDER PREVIEW</span>
+          </div>
+        </section>
+
+        <section class="cv-done" id="cvDoneSection" style="display:none">
+          <span aria-hidden="true">✓</span>
+          <div><div class="cv-done-title">EXPORT COMPLETE</div><div class="cv-done-meta" id="cvDoneMeta"></div></div>
+        </section>
+      </div>
+
+      <footer class="cv-footer">
+        <button class="cv-btn-primary" id="cvStart" type="button" disabled>START EXPORT</button>
+        <button class="cv-btn-danger" id="cvStop" type="button" style="display:none">STOP</button>
+        <button class="cv-btn-green" id="cvSave" type="button" style="display:none"><span id="cvSaveLabel">Download Video</span></button>
+        <button class="cv-btn-secondary" id="cvConvertAnother" type="button" style="display:none">CONVERT ANOTHER</button>
+      </footer>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
