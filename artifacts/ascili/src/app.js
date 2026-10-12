@@ -1213,6 +1213,7 @@ let cvSourceVideo = null;   // hidden video used by the converter
 let cvBlob        = null;   // result blob after encoding
 let cvMimeType    = '';
 let cvFile        = null;
+let cvTemporaryExport = null;
 let cvProgressClock = null;
 let cvProgressStartedAt = 0;
 let cvCurrentProgress = 0;
@@ -1379,6 +1380,8 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes)
     const handle = await root.getFileHandle(tempName, { create: true });
     const stream = await handle.createWritable();
     let closed = false;
+    let downloadFile = null;
+    let downloadStarted = false;
     const cleanup = () => root.removeEntry(tempName).catch(() => {});
     return {
       writable: {
@@ -1388,12 +1391,20 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes)
           try { if (!closed) await stream.abort(); } finally { await cleanup(); }
         },
       },
-      async download() {
+      async prepareDownload() {
         if (!closed) throw new Error('Temporary export file is not ready yet.');
-        download(suggestedName, await handle.getFile(), mimeType);
-        window.setTimeout(cleanup, 60_000);
+        downloadFile = await handle.getFile();
+      },
+      download() {
+        if (!downloadFile) throw new Error('Temporary export file is not ready to download.');
+        download(suggestedName, downloadFile, mimeType);
+        downloadStarted = true;
+        window.setTimeout(cleanup, 60 * 60 * 1000);
       },
       cleanup,
+      discard() {
+        if (!downloadStarted) return cleanup();
+      },
     };
   } catch {
     return null;
@@ -1495,6 +1506,8 @@ function cvSetFile(file) {
 
 function cvResetUI() {
   cvStopProgressClock();
+  cvTemporaryExport?.discard();
+  cvTemporaryExport = null;
   cvProgressSection.style.display = 'none';
   cvDoneSection.style.display     = 'none';
   cvStart.style.display           = '';
@@ -1654,7 +1667,7 @@ cvStart.addEventListener('click', async () => {
       temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
       if (temporaryExport) {
         writable = temporaryExport.writable;
-        showToast('Using temporary browser storage; the finished file will download automatically.');
+        showToast('Using temporary browser storage; click Download when the export finishes.');
       }
     }
     if (fileWriteDenied && writable) {
@@ -1714,17 +1727,18 @@ cvStart.addEventListener('click', async () => {
         cvStopProgressClock();
         if (temporaryExport) {
           try {
-            await temporaryExport.download();
+            await temporaryExport.prepareDownload();
+            cvTemporaryExport = temporaryExport;
           } catch (error) {
             temporaryExport.cleanup();
-            cvShowExportError('Could not download the temporary subtitle file: ' + (error?.message || error));
+            cvShowExportError('Could not prepare the temporary subtitle file for download: ' + (error?.message || error));
             return;
           }
         }
         cvBlob = blob;
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
-        cvSave.style.display = result.savedToDisk ? 'none' : '';
+        cvSave.style.display = temporaryExport || !result.savedToDisk ? '' : 'none';
         cvConvertAnother.style.display = '';
         cvProgressFill.style.width = '100%';
         cvProgressPct.textContent = '100%';
@@ -1734,11 +1748,11 @@ cvStart.addEventListener('click', async () => {
         cvProgressSection.querySelector('.cv-section-label').textContent = 'SRT EXPORT COMPLETE';
         cvDoneSection.style.display = 'flex';
         cvDoneMeta.textContent = temporaryExport
-          ? `${fmtBytes(estimatedOutputBytes)}  ·  Downloaded SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`
+          ? `${fmtBytes(estimatedOutputBytes)}  ·  SRT ready to download  ·  ${targetFps} FPS  ·  ${result.cols} cols`
           : result.savedToDisk
           ? `Saved to selected file  ·  SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`
           : `${fmtBytes(blob.size)}  ·  SRT  ·  ${targetFps} FPS  ·  ${result.cols} cols`;
-        showToast(temporaryExport ? 'SRT download started' : result.savedToDisk ? 'SRT saved to file' : 'SRT ready to download');
+        showToast(temporaryExport ? 'SRT ready to download' : result.savedToDisk ? 'SRT saved to file' : 'SRT ready to download');
       },
       onError(message) {
         cvStop.style.display = 'none';
@@ -1781,10 +1795,11 @@ cvStart.addEventListener('click', async () => {
       cvStopProgressClock();
       if (temporaryExport) {
         try {
-          await temporaryExport.download();
+          await temporaryExport.prepareDownload();
+          cvTemporaryExport = temporaryExport;
         } catch (error) {
           temporaryExport.cleanup();
-          cvShowExportError('Could not download the temporary video file: ' + (error?.message || error));
+          cvShowExportError('Could not prepare the temporary video file for download: ' + (error?.message || error));
           return;
         }
       }
@@ -1792,7 +1807,7 @@ cvStart.addEventListener('click', async () => {
       cvMimeType = mimeType;
 
       cvStop.style.display           = 'none';
-      cvSave.style.display           = result?.savedToDisk ? 'none' : '';
+      cvSave.style.display           = temporaryExport || !result?.savedToDisk ? '' : 'none';
       cvConvertAnother.style.display = '';
       cvProgressFill.style.width     = '100%';
       cvProgressPct.textContent      = '100%';
@@ -1803,11 +1818,11 @@ cvStart.addEventListener('click', async () => {
       cvDoneSection.style.display = 'flex';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
       cvDoneMeta.textContent = temporaryExport
-        ? `${fmtBytes(estimatedOutputBytes)}  ·  Downloaded ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
+        ? `${fmtBytes(estimatedOutputBytes)}  ·  ${ext.toUpperCase()} ready to download  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
         : result?.savedToDisk
         ? `Saved to selected file  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
         : `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
-      showToast(temporaryExport ? 'Video download started' : result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
+      showToast(temporaryExport ? 'Video ready to download' : result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
     },
     onError(msg) {
       cvStop.style.display  = 'none';
@@ -1832,6 +1847,15 @@ cvStop.addEventListener('click', () => {
 });
 
 cvSave.addEventListener('click', () => {
+  if (cvTemporaryExport) {
+    try {
+      cvTemporaryExport.download();
+      showToast('Download started');
+    } catch (error) {
+      cvShowExportError(error?.message || error);
+    }
+    return;
+  }
   if (!cvBlob) return;
   const ext = cvMimeType.includes('subrip') ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
