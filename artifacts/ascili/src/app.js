@@ -1213,6 +1213,9 @@ let cvSourceVideo = null;   // hidden video used by the converter
 let cvBlob        = null;   // result blob after encoding
 let cvMimeType    = '';
 let cvFile        = null;
+let cvProgressClock = null;
+let cvProgressStartedAt = 0;
+let cvCurrentProgress = 0;
 
 function fmtTime(s) {
   if (!isFinite(s) || s == null) return '--:--';
@@ -1221,6 +1224,40 @@ function fmtTime(s) {
   const sec = Math.floor(s % 60);
   if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
   return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function cvUpdateProgressClock() {
+  if (!cvProgressStartedAt) return;
+  const elapsed = (performance.now() - cvProgressStartedAt) / 1000;
+  cvProgressTime.textContent = 'Elapsed: ' + fmtTime(elapsed);
+  if (cvCurrentProgress >= 1) {
+    cvProgressEta.textContent = 'Finalizing file…';
+  } else if (cvCurrentProgress > 0.002) {
+    cvProgressEta.textContent = 'ETA: ' + fmtTime(elapsed / cvCurrentProgress * (1 - cvCurrentProgress));
+  } else {
+    cvProgressEta.textContent = 'ETA: calculating…';
+  }
+  if (elapsed > 1 && cvCurrentProgress > 0.01 && Number.isFinite(cvSourceVideo?.duration)) {
+    const speedMultiplier = cvCurrentProgress * cvSourceVideo.duration / elapsed;
+    cvSpeedBadge.textContent = `${speedMultiplier.toFixed(1)}× speed`;
+  }
+}
+
+function cvStartProgressClock() {
+  cvStopProgressClock();
+  cvProgressStartedAt = performance.now();
+  cvCurrentProgress = 0;
+  cvUpdateProgressClock();
+  cvProgressClock = window.setInterval(cvUpdateProgressClock, 500);
+}
+
+function cvStopProgressClock() {
+  if (cvProgressClock !== null) {
+    cvUpdateProgressClock();
+    window.clearInterval(cvProgressClock);
+    cvProgressClock = null;
+  }
+  cvProgressStartedAt = 0;
 }
 
 function estimateVideoBytes(duration, cols, videoWidth, videoHeight, resolution) {
@@ -1422,6 +1459,7 @@ function cvSetFile(file) {
 });
 
 function cvResetUI() {
+  cvStopProgressClock();
   cvProgressSection.style.display = 'none';
   cvDoneSection.style.display     = 'none';
   cvStart.style.display           = '';
@@ -1440,6 +1478,7 @@ function cvResetUI() {
 }
 
 function cvShowExportError(message) {
+  cvStopProgressClock();
   cvProgressSection.style.display = 'block';
   cvError.textContent = `Export failed: ${message || 'The browser could not export this video.'}`;
   cvError.hidden = false;
@@ -1465,6 +1504,7 @@ cvClose.addEventListener('click', () => {
     if (!confirm('Stop the current conversion?')) return;
     cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
   }
+  cvStopProgressClock();
   cvOverlay.classList.remove('open');
   cvOverlay.setAttribute('aria-hidden', 'true');
 });
@@ -1564,6 +1604,7 @@ cvStart.addEventListener('click', async () => {
   cvSave.style.display            = 'none';
   cvConvertAnother.style.display  = 'none';
   cvBlob = null;
+  cvStartProgressClock();
 
   if (isSrt) {
     cvProgressSection.querySelector('.cv-section-label').textContent = 'SRT EXPORT PROGRESS';
@@ -1571,15 +1612,16 @@ cvStart.addEventListener('click', async () => {
     cvSrtExporter.start(cvSourceVideo, { ...exportCfg, monoColor: state.monoColor }, {
       targetFps,
       writable,
-      onProgress(pct, elapsed, eta, frameNum, frameTotal) {
+      onProgress(pct, _elapsed, _eta, frameNum, frameTotal) {
+        cvCurrentProgress = pct;
         if (frameNum !== frameTotal && frameNum % Math.max(1, Math.floor(targetFps / 2)) !== 0) return;
         cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${frameTotal.toLocaleString()} frames`;
         cvProgressFill.style.width = (pct * 100).toFixed(1) + '%';
         cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
-        cvProgressTime.textContent = 'Elapsed: ' + fmtTime(elapsed);
-        cvProgressEta.textContent = eta != null ? 'ETA: ' + fmtTime(eta) : '';
+        cvUpdateProgressClock();
       },
       onComplete(blob, resultMime, result) {
+        cvStopProgressClock();
         cvBlob = blob;
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
@@ -1617,21 +1659,14 @@ cvStart.addEventListener('click', async () => {
     targetFps,
     resolution,
     writable,
-    onProgress(pct, elapsed, eta) {
+    onProgress(pct) {
+      cvCurrentProgress = pct;
       const frameNum = Math.round(pct * totalFrames);
       if (frameNum !== totalFrames && frameNum % Math.max(1, Math.floor(targetFps / 2)) !== 0) return;
       cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
       cvProgressFill.style.width  = (pct * 100).toFixed(1) + '%';
       cvProgressPct.textContent   = (pct * 100).toFixed(0) + '%';
-      cvProgressTime.textContent  = 'Elapsed: ' + fmtTime(elapsed);
-      cvProgressEta.textContent   = eta != null ? 'ETA: ' + fmtTime(eta) : '';
-
-      // Speed badge
-      if (elapsed > 1 && pct > 0.01) {
-        const videoDurationProcessed = pct * cvSourceVideo.duration;
-        const speedMultiplier = videoDurationProcessed / elapsed;
-        cvSpeedBadge.textContent = `${speedMultiplier.toFixed(1)}× speed`;
-      }
+      cvUpdateProgressClock();
 
       // Mirror exporter canvas → visible preview
       const src = cvExporter.canvas;
@@ -1641,6 +1676,7 @@ cvStart.addEventListener('click', async () => {
       }
     },
     onComplete(blob, mimeType, result) {
+      cvStopProgressClock();
       cvBlob     = blob;
       cvMimeType = mimeType;
 
@@ -1675,6 +1711,7 @@ cvStart.addEventListener('click', async () => {
 
 cvStop.addEventListener('click', () => {
   cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
+  cvStopProgressClock();
   cvStop.style.display  = 'none';
   cvStart.style.display = '';
   cvProgressEta.textContent = 'Stopped';
@@ -1711,6 +1748,7 @@ cvOverlay.addEventListener('click', e => {
       if (!confirm('Stop the current conversion?')) return;
       cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
     }
+    cvStopProgressClock();
     cvOverlay.classList.remove('open');
     cvOverlay.setAttribute('aria-hidden', 'true');
   }
@@ -1729,6 +1767,7 @@ document.addEventListener('keydown', e => {
         if (!confirm('Stop the current conversion?')) return;
         cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
       }
+      cvStopProgressClock();
       cvOverlay.classList.remove('open');
       cvOverlay.setAttribute('aria-hidden', 'true');
     }
