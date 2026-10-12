@@ -258,8 +258,8 @@ uniform vec3  u_monoColor;
 uniform int   u_scanlines;
 
 uniform float u_brightness;
-uniform float u_contrast;
-uniform float u_gamma;
+uniform float u_contrastMult;
+uniform float u_gammaExp;
 uniform float u_saturation;
 
 uniform int   u_enableEdge;
@@ -273,18 +273,15 @@ vec3 adjustColor(vec3 c) {
   if (u_brightness != 0.0) {
     c += u_brightness;
   }
-  if (u_contrast != 0.0) {
-    float cVal = u_contrast * 255.0;
-    float f = (259.0 * (cVal + 255.0)) / (255.0 * (259.0 - cVal));
-    c = (c - 0.5) * f + 0.5;
+  if (u_contrastMult != 1.0) {
+    c = (c - 0.5) * u_contrastMult + 0.5;
   }
   if (u_saturation != 0.0) {
     float gray = dot(c, vec3(0.299, 0.587, 0.114));
     c = mix(vec3(gray), c, 1.0 + u_saturation);
   }
-  if (u_gamma != 0.0) {
-    float gv = u_gamma > 0.0 ? 1.0 / (1.0 + u_gamma) : 1.0 + abs(u_gamma);
-    c = pow(clamp(c, 0.0, 1.0), vec3(gv));
+  if (u_gammaExp != 1.0) {
+    c = pow(clamp(c, 0.0, 1.0), vec3(u_gammaExp));
   }
   return clamp(c, 0.0, 1.0);
 }
@@ -305,15 +302,10 @@ void main() {
     vec2 stepX = vec2(1.0 / u_gridSize.x, 0.0);
     vec2 stepY = vec2(0.0, 1.0 / u_gridSize.y);
 
-    vec3 rgbR = adjustColor(texture2D(u_video, cellCenter + stepX).rgb);
-    vec3 rgbL = adjustColor(texture2D(u_video, cellCenter - stepX).rgb);
-    vec3 rgbD = adjustColor(texture2D(u_video, cellCenter + stepY).rgb);
-    vec3 rgbU = adjustColor(texture2D(u_video, cellCenter - stepY).rgb);
-
-    float lumR = dot(rgbR, vec3(0.299, 0.587, 0.114));
-    float lumL = dot(rgbL, vec3(0.299, 0.587, 0.114));
-    float lumD = dot(rgbD, vec3(0.299, 0.587, 0.114));
-    float lumU = dot(rgbU, vec3(0.299, 0.587, 0.114));
+    float lumR = dot(texture2D(u_video, cellCenter + stepX).rgb, vec3(0.299, 0.587, 0.114));
+    float lumL = dot(texture2D(u_video, cellCenter - stepX).rgb, vec3(0.299, 0.587, 0.114));
+    float lumD = dot(texture2D(u_video, cellCenter + stepY).rgb, vec3(0.299, 0.587, 0.114));
+    float lumU = dot(texture2D(u_video, cellCenter - stepY).rgb, vec3(0.299, 0.587, 0.114));
 
     float gx = (lumR - lumL) * 0.5;
     float gy = (lumD - lumU) * 0.5;
@@ -378,11 +370,32 @@ function createWebGL2ShaderSources() {
 export class AsciliWebGLRenderer {
   constructor(canvas) {
     this.canvas = canvas;
+    this.profile = null;
+    this.gpuTimeMs = null;
+    this.supported = false;
+
+    this._onContextLost = (e) => {
+      e.preventDefault();
+      this.supported = false;
+    };
+    this._onContextRestored = () => {
+      this._initGL();
+    };
+
+    if (this.canvas && typeof this.canvas.addEventListener === 'function') {
+      this.canvas.addEventListener('webglcontextlost', this._onContextLost, false);
+      this.canvas.addEventListener('webglcontextrestored', this._onContextRestored, false);
+    }
+
+    this._initGL();
+  }
+
+  _initGL() {
+    const canvas = this.canvas;
     this.gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true, antialias: false, alpha: false });
     this.isWebGL2 = Boolean(this.gl);
     this.gl ||= canvas.getContext('webgl', { preserveDrawingBuffer: true, antialias: false, alpha: false });
     this.supported = !!this.gl;
-    this.profile = null;
     if (!this.supported) return;
 
     const gl = this.gl;
@@ -390,7 +403,6 @@ export class AsciliWebGLRenderer {
       gl.getExtension('EXT_disjoint_timer_query');
     this._gpuQuery = null;
     this._gpuQueryActive = false;
-    this.gpuTimeMs = null;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
@@ -422,8 +434,8 @@ export class AsciliWebGLRenderer {
     this._uScanlines       = gl.getUniformLocation(this._program, 'u_scanlines');
 
     this._uBrightness      = gl.getUniformLocation(this._program, 'u_brightness');
-    this._uContrast        = gl.getUniformLocation(this._program, 'u_contrast');
-    this._uGamma           = gl.getUniformLocation(this._program, 'u_gamma');
+    this._uContrastMult    = gl.getUniformLocation(this._program, 'u_contrastMult');
+    this._uGammaExp        = gl.getUniformLocation(this._program, 'u_gammaExp');
     this._uSaturation      = gl.getUniformLocation(this._program, 'u_saturation');
 
     this._uEnableEdge      = gl.getUniformLocation(this._program, 'u_enableEdge');
@@ -477,16 +489,23 @@ export class AsciliWebGLRenderer {
 
   renderDirect(sourceEl, cols, rows, atlas, config) {
     const gl = this.gl;
-    if (!gl || gl.isContextLost()) return false;
+    if (!gl || gl.isContextLost() || !this.supported) return false;
+
+    if (sourceEl instanceof HTMLMediaElement && sourceEl.readyState < 2) {
+      return false;
+    }
+
+    const vw = sourceEl.videoWidth || sourceEl.width || 0;
+    const vh = sourceEl.videoHeight || sourceEl.height || 0;
+    if (vw <= 0 || vh <= 0 || this.canvas.width <= 0 || this.canvas.height <= 0) {
+      return false;
+    }
 
     this._pollGpuTimer();
     this._beginGpuTimer();
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this._program);
-
-    const vw = sourceEl.videoWidth || sourceEl.width || 640;
-    const vh = sourceEl.videoHeight || sourceEl.height || 480;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this._texVideo);
@@ -540,15 +559,22 @@ export class AsciliWebGLRenderer {
     gl.uniform3f(this._uMonoColor, monoRgb[0], monoRgb[1], monoRgb[2]);
     gl.uniform1i(this._uScanlines, config.scanlines ? 1 : 0);
 
-    gl.uniform1f(this._uBrightness, (config.brightness || 0) / 100.0);
-    gl.uniform1f(this._uContrast,   (config.contrast || 0) / 100.0);
-    gl.uniform1f(this._uGamma,      (config.gamma || 0) / 100.0);
-    gl.uniform1f(this._uSaturation, (config.saturation || 0) / 100.0);
+    const b = (config.brightness || 0) / 100.0;
+    const cVal = ((config.contrast || 0) / 100.0) * 255.0;
+    const cMult = (config.contrast || 0) !== 0 ? (259.0 * (cVal + 255.0)) / Math.max(0.001, (255.0 * (259.0 - cVal))) : 1.0;
+    const gVal = (config.gamma || 0) / 100.0;
+    const gExp = gVal !== 0 ? (gVal > 0 ? 1.0 / (1.0 + gVal) : 1.0 + Math.abs(gVal)) : 1.0;
+    const s = (config.saturation || 0) / 100.0;
+
+    gl.uniform1f(this._uBrightness,   b);
+    gl.uniform1f(this._uContrastMult, cMult);
+    gl.uniform1f(this._uGammaExp,     gExp);
+    gl.uniform1f(this._uSaturation,   s);
 
     const quality = this.profile?.quality || 'high';
     const edgeEnabled = (config.enableEdgeDetection ?? true) &&
       quality !== 'low' &&
-      cols * rows <= 250_000 && atlas.charCount >= 5 && rows > 2 && cols > 2;
+      cols * rows <= 350_000 && atlas.charCount >= 5 && rows > 2 && cols > 2;
     gl.uniform1i(this._uEnableEdge, edgeEnabled ? 1 : 0);
     const eth = config.edgeThreshold ?? 0.16;
     gl.uniform1f(this._uEdgeThresholdSq, eth * eth);
@@ -719,11 +745,13 @@ class AsciliCanvasWorkerRenderer {
 
   render(video, cols, rows, atlas, config) {
     if (this.failed || typeof createImageBitmap !== 'function') return false;
+    if (video instanceof HTMLMediaElement && video.readyState < 2) return false;
     if (this.busy) return true;
     const generation = this.generation;
     this.busy = true;
     createImageBitmap(video).then((frame) => {
       if (!this.busy || generation !== this.generation) { frame.close(); return; }
+      this._bitmapErrors = 0;
       this.worker.postMessage({
         frame, width: this.canvas.width, height: this.canvas.height,
         cols, rows, config, chars: atlas.charMap.slice(0, atlas.charCount), generation,
@@ -731,7 +759,10 @@ class AsciliCanvasWorkerRenderer {
     }).catch(() => {
       if (generation === this.generation) {
         this.busy = false;
-        this.failed = true;
+        this._bitmapErrors = (this._bitmapErrors || 0) + 1;
+        if (this._bitmapErrors > 25) {
+          this.failed = true;
+        }
       }
     });
     return true;
@@ -792,12 +823,21 @@ export class AsciliEngine {
     this._atlas.update(config.charSet);
 
     if (targetCanvas instanceof HTMLCanvasElement) {
+      if (targetCanvas.width <= 0 || targetCanvas.height <= 0) {
+        return { rows, cols, chars: totalCells, rendered: false };
+      }
+
       if (this._currentTarget !== targetCanvas) {
         this._currentTarget = targetCanvas;
         // Keep the visible canvas 2D-capable so a shader/context failure can
         // always fall back and screenshots/recordings see the finished frame.
         this._displayCtx = targetCanvas.getContext('2d', { alpha: false });
-        this._gpuCanvas = document.createElement('canvas');
+        this._gpuCanvas = (typeof OffscreenCanvas !== 'undefined')
+          ? new OffscreenCanvas(Math.max(2, targetCanvas.width), Math.max(2, targetCanvas.height))
+          : document.createElement('canvas');
+        this._gpuCanvas.width = targetCanvas.width;
+        this._gpuCanvas.height = targetCanvas.height;
+
         try {
           this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
           this._webgl.profile = this.hardwareProfile;
@@ -808,10 +848,15 @@ export class AsciliEngine {
         if (!this._webgl?.supported) this._webgl = null;
         if (!this._webgl) this._initFallbackRenderer(targetCanvas);
       }
-      if (this._canvasWorker?.failed) {
-        this._canvasWorker.worker.terminate();
-        this._canvasWorker = null;
-        this._canvasWorkerFailed = true;
+
+      // Check if WebGL context needs recreation
+      if (this._webgl && (!this._webgl.supported || this._webgl.gl?.isContextLost())) {
+        try {
+          this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
+          this._webgl.profile = this.hardwareProfile;
+        } catch {
+          // Keep trying next frame
+        }
       }
 
       // Prefer the GPU path; timer queries report GPU time asynchronously when supported.
@@ -821,37 +866,42 @@ export class AsciliEngine {
         if (this._gpuCanvas.height !== targetCanvas.height) this._gpuCanvas.height = targetCanvas.height;
         try {
           rendered = this._webgl.renderDirect(videoEl, cols, rows, this._atlas, config);
-          if (rendered && this._displayCtx) {
+          if (rendered && this._displayCtx && targetCanvas.width > 0 && targetCanvas.height > 0) {
             this._displayCtx.drawImage(this._gpuCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
           }
         } catch {
-          this._webgl = null;
           rendered = false;
+          if (this._webgl?.gl?.isContextLost()) {
+            this._webgl.supported = false;
+          }
         }
       }
 
-      // If syncOnly is requested (e.g. video export), avoid asynchronous worker
-      if (!rendered && !config.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
-        this._initFallbackRenderer(targetCanvas);
-      }
-      if (!rendered && !config.syncOnly && this._canvasWorker && totalCells <= 500_000) {
-        rendered = this._canvasWorker.render(videoEl, cols, rows, this._atlas, config);
-      }
-      if (!rendered && this._canvasWorker?.failed) {
-        this._canvasWorker.worker.terminate();
-        this._canvasWorker = null;
-        this._canvasWorkerFailed = true;
-        this._initFallbackRenderer(targetCanvas);
-      }
-      if (!rendered) {
-        if (!this._canvas2d) {
-          try { this._canvas2d = new AsciliCanvas2DRenderer(targetCanvas); } catch { this._canvas2d = null; }
+      // Fallback path: ONLY engaged if WebGL is unavailable on this device
+      if (!rendered && (!this._webgl || !this._webgl.supported)) {
+        if (!config.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
+          this._initFallbackRenderer(targetCanvas);
         }
-        if (this._canvas2d) {
-          this._renderFallback2D(videoEl, cols, rows, config);
-          rendered = true;
+        if (!config.syncOnly && this._canvasWorker && totalCells <= 500_000) {
+          rendered = this._canvasWorker.render(videoEl, cols, rows, this._atlas, config);
+        }
+        if (!rendered && this._canvasWorker?.failed) {
+          this._canvasWorker.worker.terminate();
+          this._canvasWorker = null;
+          this._canvasWorkerFailed = true;
+          this._initFallbackRenderer(targetCanvas);
+        }
+        if (!rendered) {
+          if (!this._canvas2d) {
+            try { this._canvas2d = new AsciliCanvas2DRenderer(targetCanvas); } catch { this._canvas2d = null; }
+          }
+          if (this._canvas2d) {
+            this._renderFallback2D(videoEl, cols, rows, config);
+            rendered = true;
+          }
         }
       }
+
       if (!rendered) {
         return { rows, cols, chars: totalCells, rendered: false };
       }

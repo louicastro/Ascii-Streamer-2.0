@@ -359,6 +359,7 @@ export class AsciliVideoExporter {
 
     const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
     let useGpuEngine = true;
+    let consecutiveGpuFailures = 0;
 
     const drawFrame = () => {
       let frameRendered = false;
@@ -366,8 +367,15 @@ export class AsciliVideoExporter {
         try {
           const res = this._engine.renderFrame(videoEl, this._frameCanvas, renderCfg);
           frameRendered = Boolean(res?.rendered);
+          if (frameRendered) {
+            consecutiveGpuFailures = 0;
+          } else {
+            consecutiveGpuFailures++;
+            if (consecutiveGpuFailures > 20) useGpuEngine = false;
+          }
         } catch {
-          useGpuEngine = false;
+          consecutiveGpuFailures++;
+          if (consecutiveGpuFailures > 20) useGpuEngine = false;
         }
       }
       if (!frameRendered) {

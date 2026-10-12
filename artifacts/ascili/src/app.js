@@ -650,22 +650,32 @@ function renderLoop(ts) {
   const interval = 1000 / cfg.fps;
   if (ts - state.lastFrameTs < interval) return;
 
-  if (!sourceVideo.videoWidth) return;
+  if (!sourceVideo.videoWidth || (sourceVideo instanceof HTMLMediaElement && sourceVideo.readyState < 2)) {
+    return;
+  }
+
+  const targetCols = Math.max(20, Math.floor(cfg.cols * state.qualityScale));
+  const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
+  updateAsciiLayout(expectedRows, targetCols);
 
   const t0 = performance.now();
   const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
     ...cfg,
-    cols: Math.max(20, Math.floor(cfg.cols * state.qualityScale)),
+    cols: targetCols,
+    rows: expectedRows,
     monoColor: state.monoColor,
     scanlines: state.scanlinesOn,
   });
   if (dims.rendered === false) {
-    if (!state.renderWarningShown) {
+    state.consecutiveFailedFrames = (state.consecutiveFailedFrames || 0) + 1;
+    if (state.consecutiveFailedFrames > 30 && !state.renderWarningShown) {
       showToast('This device could not render this grid size. Reduce columns.');
       state.renderWarningShown = true;
     }
     return;
   }
+  state.consecutiveFailedFrames = 0;
+  state.renderWarningShown = false;
   updateAsciiLayout(dims.rows, dims.cols);
   const latency = performance.now() - t0;
   const performanceStats = engine.getPerformanceStats();
