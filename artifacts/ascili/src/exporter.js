@@ -27,9 +27,10 @@ export const CHAR_W_FACTOR = 0.601;
 // ─── Resolution Presets ─────────────────────────────────────────────────────
 
 export const RESOLUTIONS = {
-  auto:  null,          // use whatever cols + fontSize produce
+  auto:    null,          // use whatever cols + fontSize produce
   '720p':  { w: 1280, h: 720  },
   '1080p': { w: 1920, h: 1080 },
+  '1440p': { w: 2560, h: 1440 },
 };
 
 /**
@@ -46,7 +47,7 @@ export function computeFontForResolution(cols, videoW, videoH, resolution) {
   // Target: rows * fontSize ≈ res.h
   const fontFromH = res.h / rows;
   // Use the smaller to fit both dimensions
-  const fontSize = Math.min(30, Math.max(1, Math.floor(Math.min(fontFromW, fontFromH))));
+  const fontSize = Math.min(120, Math.max(1, Math.floor(Math.min(fontFromW, fontFromH))));
 
   const canvasW = makeEven(Math.ceil(cols * fontSize * CHAR_W_FACTOR));
   const canvasH = makeEven(rows * fontSize);
@@ -294,7 +295,7 @@ export class AsciliVideoExporter {
    *   opts.onComplete(blob, mimeType)     – called when recording finishes
    *   opts.onError(msg)                   – called on failure
    *   opts.targetFps                      – recording FPS (default 60)
-   *   opts.resolution                     – 'auto', '720p', '1080p'
+   *   opts.resolution                     – 'auto', '720p', '1080p', '1440p'
    */
   start(videoEl, cfg, opts = {}) {
     const {
@@ -468,7 +469,7 @@ export class AsciliVideoExporter {
 
     // Use higher bitrate for higher resolutions
     const effectiveW = this._canvas.width;
-    const bitsPerSecond = effectiveW >= 3000 ? 16_000_000
+    const bitsPerSecond = effectiveW >= 2400 ? 16_000_000
                         : effectiveW >= 1500 ? 8_000_000
                         : 4_000_000;
 
@@ -1317,7 +1318,7 @@ export class AsciliLiveRecorder {
    * @param {object} cfg   – current ASCILI config (cols, fontSize, etc.)
    * @param {object} opts
    *   opts.targetFps        – recording FPS (default 60)
-   *   opts.resolution       – 'auto', '720p', '1080p'
+   *   opts.resolution       – 'auto', '720p', '1080p', '1440p'
    *   opts.videoWidth       – source video width (for aspect ratio)
    *   opts.videoHeight      – source video height (for aspect ratio)
    *   opts.onComplete(blob, mimeType)
@@ -1364,12 +1365,15 @@ export class AsciliLiveRecorder {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
     }) || 'video/webm';
 
-    // Directly capture the hardware WebGL canvas when possible for 120 FPS zero-lag streaming
+    const resInfo = computeFontForResolution(cfg.cols || 80, videoWidth, videoHeight, resolution);
+    this._overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;
+
     const asciiCanvas = document.getElementById('asciiCanvas');
     let stream = null;
     this._directStream = false;
 
-    if (asciiCanvas && asciiCanvas.width > 0 && asciiCanvas.height > 0) {
+    // Direct stream capture only when resolution is 'auto' (native display canvas)
+    if (resolution === 'auto' && asciiCanvas && asciiCanvas.width > 0 && asciiCanvas.height > 0) {
       try {
         stream = asciiCanvas.captureStream(targetFpsVal);
         this._directStream = true;
@@ -1379,17 +1383,11 @@ export class AsciliLiveRecorder {
     }
 
     if (!stream) {
-      // Fallback: internal 2D canvas
       this._directStream = false;
-      const resInfo = computeFontForResolution(cfg.cols || 80, videoWidth, videoHeight, resolution);
-      this._overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;
-
-      const cols = cfg.cols || 80;
-      const rows = Math.max(1, Math.round(cols * (videoHeight / videoWidth) * 0.45));
-      const fontSize = this._overrides?.fontSize ?? cfg.fontSize ?? 10;
-      const charW = fontSize * CHAR_W_FACTOR;
-      this._canvas.width  = makeEven(Math.ceil(cols * charW));
-      this._canvas.height = makeEven(rows * fontSize);
+      const targetW = resInfo?.outputW || (resolution === '1440p' ? 2560 : resolution === '1080p' ? 1920 : 1280);
+      const targetH = resInfo?.outputH || (resolution === '1440p' ? 1440 : resolution === '1080p' ? 1080 : 720);
+      this._canvas.width  = targetW;
+      this._canvas.height = targetH;
 
       try {
         stream = this._canvas.captureStream(targetFpsVal);
@@ -1415,8 +1413,8 @@ export class AsciliLiveRecorder {
       }
     } catch {}
 
-    const effectiveW = asciiCanvas?.width || this._canvas.width || 1280;
-    const bitsPerSecond = effectiveW >= 3000 ? 16_000_000
+    const effectiveW = this._canvas.width || asciiCanvas?.width || 2560;
+    const bitsPerSecond = effectiveW >= 2400 ? 16_000_000
                         : effectiveW >= 1500 ? 8_000_000
                         : 4_000_000;
 
@@ -1566,8 +1564,20 @@ export class AsciliLiveRecorder {
    */
   captureFrame(videoEl, cfg) {
     if (!this._running) return;
-    if (this._directStream) return; // GPU WebGL canvas is already painted directly
-    renderFrameToCanvas(videoEl, this._canvas, cfg, this._overrides);
+    if (this._directStream) return; // GPU WebGL canvas is already captured directly
+    const ctx = this._canvas.getContext('2d');
+    if (!ctx) return;
+    const asciiCanvas = document.getElementById('asciiCanvas');
+    if (asciiCanvas && asciiCanvas.width > 0 && asciiCanvas.height > 0) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, this._canvas.width, this._canvas.height);
+      const scale = Math.min(this._canvas.width / asciiCanvas.width, this._canvas.height / asciiCanvas.height);
+      const dw = Math.round(asciiCanvas.width * scale);
+      const dh = Math.round(asciiCanvas.height * scale);
+      ctx.drawImage(asciiCanvas, (this._canvas.width - dw) / 2, (this._canvas.height - dh) / 2, dw, dh);
+    } else {
+      renderFrameToCanvas(videoEl, this._canvas, cfg, this._overrides);
+    }
   }
 
   /** Stop recording and trigger onComplete. */

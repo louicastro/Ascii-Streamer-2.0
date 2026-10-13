@@ -131,7 +131,7 @@ def main():
     parser.add_argument("--cols", type=int, help="Number of ASCII columns")
     parser.add_argument("--color-mode", choices=["monochrome", "truecolor", "ansi256", "ansi16", "grayscale"], help="Color mode")
     parser.add_argument("--fps", type=int, help="Target framerate (e.g. 30, 60, 120)")
-    parser.add_argument("--res", choices=["720p", "1080p", "4k"], default="1080p", help="Target output resolution")
+    parser.add_argument("--res", choices=["720p", "1080p", "1440p", "2k", "4k"], default="1440p", help="Target output resolution")
     parser.add_argument("--play", action="store_true", help="Play video directly inside terminal")
     parser.add_argument("--serve", action="store_true", help="Start the web server for the website")
     parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")

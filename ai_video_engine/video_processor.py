@@ -175,6 +175,8 @@ class VideoProcessor:
         res_map = {
             "720p": (1280, 720),
             "1080p": (1920, 1080),
+            "1440p": (2560, 1440),
+            "2k": (2560, 1440),
             "4k": (3840, 2160),
         }
         if target_resolution and target_resolution.lower() in res_map:

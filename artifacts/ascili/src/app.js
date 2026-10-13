@@ -504,9 +504,10 @@ async function startLiveRecording() {
     if (temporaryExport) writable = temporaryExport.writable;
   }
 
+  const targetResolution = cvCfgRes?.value || '1440p';
   liveRecorder.startRecording(cfg, {
     targetFps: cfg.fps || 60,
-    resolution: '1080p',
+    resolution: targetResolution,
     videoWidth:  sourceVideo.videoWidth  || 640,
     videoHeight: sourceVideo.videoHeight || 480,
     writable,
@@ -540,11 +541,12 @@ async function startLiveRecording() {
 
   if (!liveRecorder.running) return;
   updateRecUI(true);
+  const resLabel = targetResolution.toUpperCase();
   showToast(temporaryExport
-    ? 'Recording limitless video; click Stop & Download when done'
+    ? `Recording limitless ${resLabel} video; click Stop & Download when done`
     : writable
-    ? 'Recording limitless video to selected file'
-    : 'Recording limitless video');
+    ? `Recording limitless ${resLabel} video to selected file`
+    : `Recording limitless ${resLabel} video`);
 }
 
 function stopLiveRecording() {
@@ -1316,7 +1318,7 @@ function estimateVideoBytes(duration, cols, videoWidth, videoHeight, resolution)
   const res = computeFontForResolution(cols, videoWidth, videoHeight, resolution);
   const fontSize = res?.fontSize ?? cfg.fontSize ?? 10;
   const canvasWidth = res?.outputW ?? Math.ceil(cols * fontSize * 0.601);
-  const bitrate = canvasWidth >= 3000 ? 16_000_000 : canvasWidth >= 1500 ? 8_000_000 : 4_000_000;
+  const bitrate = canvasWidth >= 2400 ? 16_000_000 : canvasWidth >= 1500 ? 8_000_000 : 4_000_000;
   return bitrate * duration / 8;
 }
 
@@ -1717,7 +1719,7 @@ cvStart.addEventListener('click', async () => {
   const isVtt = exportType === 'vtt';
   const isSrt = exportType === 'srt';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
-  const resolution = cvCfgRes.value || '1080p';
+  const resolution = cvCfgRes.value || '1440p';
   const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
     ? cvSourceVideo.duration
     : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
