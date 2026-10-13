@@ -1336,7 +1336,7 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
   }, 1);
   const cells = srtCols * rows;
   const colorMarkup = (isAss || isYoutube || isYtt)
-    ? (cfg.colorMode === 'monochrome' || isYoutube || isYtt ? 0 : cells * 15)
+    ? (cfg.colorMode === 'monochrome' || isYoutube ? 0 : cells * 15)
     : (cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28);
   const cueBytes = cells * bytesPerChar + colorMarkup + (isAss || isYtt ? 50 : 48);
   const totalRaw = cueBytes * Math.ceil(duration * fps);
@@ -1377,10 +1377,13 @@ function updateExportModeUI() {
   const isSrt = exportType === 'srt';
   cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
+  const colorLabel = cfg.colorMode === 'monochrome'
+    ? 'monochrome'
+    : (cfg.colorMode === 'grayscale' ? 'grayscale' : cfg.colorMode === 'ansi16' ? '16 colors' : cfg.colorMode === 'ansi256' ? '256 colors' : 'color');
   if (cvSrtNote) {
     const speedMult = selectedFps <= 15 ? 3.0 : selectedFps <= 30 ? 2.5 : 2.0;
     cvSrtNote.textContent = isYtt
-      ? `YouTube Timed Text (.ytt) uses native YouTube XML supporting full 80/100 cols, monospace font, 24 FPS animation, and strict 20 MB size ceiling.`
+      ? `YouTube Timed Text (.ytt) uses native YouTube XML supporting full 80/100 cols, monospace font, ${colorLabel}, 24 FPS animation, and strict 20 MB size ceiling.`
       : isYoutube
       ? `YouTube Captions (.vtt) produces crash-proof 30-col × 4-row plain text at 2 FPS optimized for YouTube Studio limits.`
       : isAss
@@ -1394,7 +1397,7 @@ function updateExportModeUI() {
     ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
     : (isYtt ? 80 : isYoutube ? 30 : isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40));
   cvCfgCols.textContent = isSubtitle
-    ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · max 20MB · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
+    ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · ${colorLabel} · max 20MB · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
     : `${cfg.cols} cols`;
   cvCfgFmt.textContent = isYtt
     ? 'YouTube Timed Text (.ytt) XML'

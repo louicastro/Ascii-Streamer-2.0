@@ -2,7 +2,7 @@
 // Renders one video frame as ASCII art directly onto an HTMLCanvasElement.
 // Used by AsciliVideoExporter to produce the recording canvas frames.
 
-import { AsciliEngine, CHAR_SETS, getAnsiColorLut, clamp, adjustPixel } from './engine.js';
+import { AsciliEngine, CHAR_SETS, getAnsiColorLut, clamp, adjustPixel, ANSI16, ANSI256 } from './engine.js';
 
 // Reuse a single offscreen canvas across calls to avoid GC pressure
 let _offscreen = null;
@@ -861,8 +861,80 @@ export class AsciliSrtExporter {
     const charset = Array.from(cfg.charSet || CHAR_SETS.standard);
     const lastChar = charset.length - 1;
     const invert = Boolean(cfg.invertChars);
-    const colorMode = (isYoutube || isYtt) ? 'monochrome' : (cfg.colorMode || 'monochrome');
+    const colorMode = isYoutube ? 'monochrome' : (cfg.colorMode || 'monochrome');
     const monoColor = cfg.monoColor || '#39ff52';
+
+    let yttPalette = [];
+    let yttPenLut = null;
+    if (isYtt) {
+      if (colorMode === 'monochrome') {
+        const monoClean = monoColor.replace('#', '');
+        const mr = parseInt(monoClean.slice(0, 2), 16) || 0x39;
+        const mg = parseInt(monoClean.slice(2, 4), 16) || 0xff;
+        const mb = parseInt(monoClean.slice(4, 6), 16) || 0x52;
+        yttPalette = [[mr, mg, mb]];
+      } else if (colorMode === 'ansi16') {
+        yttPalette = ANSI16;
+        yttPenLut = new Uint16Array(32 * 32 * 32);
+        for (let r = 0; r < 32; r++) {
+          const vr = (r * 255 / 31) | 0;
+          for (let g = 0; g < 32; g++) {
+            const vg = (g * 255 / 31) | 0;
+            for (let b = 0; b < 32; b++) {
+              const vb = (b * 255 / 31) | 0;
+              let best = 0, bestD = 9999999;
+              for (let i = 0; i < 16; i++) {
+                const pal = ANSI16[i];
+                const dr = vr - pal[0], dg = vg - pal[1], db = vb - pal[2];
+                const d = dr * dr + dg * dg + db * db;
+                if (d < bestD) { bestD = d; best = i; if (d === 0) break; }
+              }
+              yttPenLut[(r << 10) | (g << 5) | b] = best + 1;
+            }
+          }
+        }
+      } else if (colorMode === 'grayscale') {
+        yttPalette = [];
+        for (let i = 0; i < 16; i++) {
+          const v = Math.round(i * 17);
+          yttPalette.push([v, v, v]);
+        }
+        yttPenLut = new Uint16Array(32 * 32 * 32);
+        for (let r = 0; r < 32; r++) {
+          const vr = (r * 255 / 31) | 0;
+          for (let g = 0; g < 32; g++) {
+            const vg = (g * 255 / 31) | 0;
+            for (let b = 0; b < 32; b++) {
+              const vb = (b * 255 / 31) | 0;
+              const lum = 0.299 * vr + 0.587 * vg + 0.114 * vb;
+              const level = Math.max(0, Math.min(15, Math.round(lum * 15 / 255)));
+              yttPenLut[(r << 10) | (g << 5) | b] = level + 1;
+            }
+          }
+        }
+      } else {
+        // ansi256, truecolor
+        yttPalette = ANSI256;
+        yttPenLut = new Uint16Array(32 * 32 * 32);
+        for (let r = 0; r < 32; r++) {
+          const vr = (r * 255 / 31) | 0;
+          for (let g = 0; g < 32; g++) {
+            const vg = (g * 255 / 31) | 0;
+            for (let b = 0; b < 32; b++) {
+              const vb = (b * 255 / 31) | 0;
+              let best = 0, bestD = 9999999;
+              for (let i = 0; i < 256; i++) {
+                const pal = ANSI256[i];
+                const dr = vr - pal[0], dg = vg - pal[1], db = vb - pal[2];
+                const d = dr * dr + dg * dg + db * db;
+                if (d < bestD) { bestD = d; best = i; if (d === 0) break; }
+              }
+              yttPenLut[(r << 10) | (g << 5) | b] = best + 1;
+            }
+          }
+        }
+      }
+    }
     const sample = getOffscreen(cols, rows);
     this.canvas = sample.canvas;
     const parts = [];
@@ -986,11 +1058,21 @@ export class AsciliSrtExporter {
     if (isYtt) {
       const monoClean = monoColor.startsWith('#') ? monoColor : `#${monoColor}`;
       const yttSz = Math.max(0, Math.min(100, Math.round((Math.min(10, Math.max(1, cfg.fontSize || 1)) - 1) * 11)));
+      const penLines = [];
+      if (colorMode === 'monochrome') {
+        penLines.push(`  <pen id="1" fs="3" sz="${yttSz}" fc="${monoClean}" fo="254" bo="0"/>`);
+      } else {
+        for (let i = 0; i < yttPalette.length; i++) {
+          const [r, g, b] = yttPalette[i];
+          const hex = (r === 255 && g === 255 && b === 255) ? '#FEFEFE' : rgbHex(r, g, b);
+          penLines.push(`  <pen id="${i + 1}" fs="3" sz="${yttSz}" fc="${hex}" fo="254" bo="0"/>`);
+        }
+      }
       const yttHeader = [
         '<?xml version="1.0" encoding="utf-8" ?>',
         '<timedtext format="3">',
         '<head>',
-        `  <pen id="1" fs="3" sz="${yttSz}" fc="${monoClean}"/>`,
+        penLines.join('\n'),
         `  <wp id="1" ap="0" ah="0" av="0" rc="${rows}" cc="${cols}"/>`,
         '  <ws id="1" mh="2" ju="0"/>',
         '</head>',
@@ -1069,9 +1151,41 @@ export class AsciliSrtExporter {
       const lines = new Array(rows);
 
       if (isYtt) {
-        // Native YouTube Timed Text path: 80/100 cols, hard &#10; breaks, crash-proof XML
+        if (colorMode === 'monochrome') {
+          for (let row = 0; row < rows; row++) {
+            let lineStr = '';
+            const rowOffset = row * cols * 4;
+            for (let col = 0; col < cols; col++) {
+              const index = rowOffset + col * 4;
+              let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
+              if (doAdjust) {
+                red = adjustLut[red]; green = adjustLut[green]; blue = adjustLut[blue];
+                if (saturation !== 1) {
+                  const gray = 0.299 * red + 0.587 * green + 0.114 * blue;
+                  red = gray + saturation * (red - gray);
+                  green = gray + saturation * (green - gray);
+                  blue = gray + saturation * (blue - gray);
+                }
+              }
+              const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+              let charIndex = Math.round(luminance * lastChar);
+              if (invert) charIndex = lastChar - charIndex;
+              lineStr += safeChars[charIndex] || ' ';
+            }
+            lines[row] = lineStr;
+          }
+          return lines.join('&#10;');
+        }
+
+        // Color YTT: group adjacent characters with matching penId into <s p="ID"> runs
+        const runs = [];
+        let runPenId = -1;
+        let runText = '';
+
         for (let row = 0; row < rows; row++) {
-          let lineStr = '';
+          if (row > 0) {
+            runText += '&#10;';
+          }
           const rowOffset = row * cols * 4;
           for (let col = 0; col < cols; col++) {
             const index = rowOffset + col * 4;
@@ -1080,19 +1194,28 @@ export class AsciliSrtExporter {
               red = adjustLut[red]; green = adjustLut[green]; blue = adjustLut[blue];
               if (saturation !== 1) {
                 const gray = 0.299 * red + 0.587 * green + 0.114 * blue;
-                red = gray + saturation * (red - gray);
-                green = gray + saturation * (green - gray);
-                blue = gray + saturation * (blue - gray);
+                red = Math.max(0, Math.min(255, Math.round(gray + saturation * (red - gray))));
+                green = Math.max(0, Math.min(255, Math.round(gray + saturation * (green - gray))));
+                blue = Math.max(0, Math.min(255, Math.round(gray + saturation * (blue - gray))));
               }
             }
             const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
             let charIndex = Math.round(luminance * lastChar);
             if (invert) charIndex = lastChar - charIndex;
-            lineStr += safeChars[charIndex] || ' ';
+            const penId = yttPenLut ? (yttPenLut[((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)] || 1) : 1;
+
+            if (runPenId !== -1 && penId !== runPenId) {
+              runs.push(`<s p="${runPenId}">${runText}</s>`);
+              runText = '';
+            }
+            runPenId = penId;
+            runText += safeChars[charIndex] || ' ';
           }
-          lines[row] = lineStr;
         }
-        return lines.join('&#10;');
+        if (runPenId !== -1 && runText.length > 0) {
+          runs.push(`<s p="${runPenId}">${runText}</s>`);
+        }
+        return runs.length > 0 ? runs.join('') : '<s p="1"> </s>';
       }
 
       if (isYoutube) {
@@ -1249,8 +1372,8 @@ export class AsciliSrtExporter {
       let cue;
       if (isYtt) {
         const startMs = Math.round(start * 1000);
-        const durMs = Math.max(40, Math.round((safeEnd - start) * 1000));
-        cue = `  <p t="${startMs}" d="${durMs}" wp="1"><s p="1">${safeText}</s></p>\n`;
+        const bodyContent = colorMode === 'monochrome' ? `<s p="1">${safeText}</s>` : safeText;
+        cue = `  <p t="${startMs}" d="${durMs}" wp="1">${bodyContent}</p>\n`;
         // Strictly prevent exceeding 20 MB ceiling (reserve 4096 bytes for closing tags)
         if (currentYttBytes + cue.length + 4096 >= YTT_MAX_BYTES) {
           return;
