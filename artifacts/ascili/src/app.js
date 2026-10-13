@@ -1322,8 +1322,10 @@ function estimateVideoBytes(duration, cols, videoWidth, videoHeight, resolution)
   return bitrate * duration / 8;
 }
 
-function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps) {
-  const srtCols = Math.min(SRT_MAX_COLS, cols);
+function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format = 'srt') {
+  const isAss = format === 'ass';
+  const maxLimit = isAss ? 160 : SRT_MAX_COLS;
+  const srtCols = Math.min(maxLimit, cols);
   const rows = Math.max(1, Math.round(srtCols * (videoHeight / videoWidth) * 0.45));
   const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
   const bytesPerChar = chars.reduce((max, char) => {
@@ -1331,42 +1333,59 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps) {
     return Math.max(max, cp <= 0x7f ? 1 : cp <= 0x7ff ? 2 : cp <= 0xffff ? 3 : 4);
   }, 1);
   const cells = srtCols * rows;
-  const colorMarkup = cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28;
-  const cueBytes = cells * bytesPerChar + colorMarkup + 48;
+  const colorMarkup = isAss
+    ? (cfg.colorMode === 'monochrome' ? 0 : cells * 15)
+    : (cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28);
+  const cueBytes = cells * bytesPerChar + colorMarkup + (isAss ? 50 : 48);
   return cueBytes * Math.ceil(duration * fps);
 }
 
-function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 15) {
-  const maxCols = Math.min(SRT_MAX_COLS, Math.max(20, Math.round(requestedCols || 80)));
+function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 15, format = 'srt') {
+  const isAss = format === 'ass';
+  const maxLimit = isAss ? 160 : SRT_MAX_COLS;
+  const defaultCols = isAss ? 160 : 80;
+  const effectiveRequested = isAss
+    ? (requestedCols === 80 || !requestedCols ? 160 : Math.min(160, requestedCols))
+    : requestedCols;
+  const maxCols = Math.min(maxLimit, Math.max(20, Math.round(effectiveRequested || defaultCols)));
   for (let cols = maxCols; cols >= 20; cols--) {
-    if (estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps) <= SRT_SIZE_BUDGET) return cols;
+    if (estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format) <= SRT_SIZE_BUDGET) return cols;
   }
   return 20;
 }
 
 function updateExportModeUI() {
   const exportType = cvExportType.value;
-  const isSubtitle = exportType === 'srt' || exportType === 'vtt';
+  const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass';
+  const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt';
   const isSrt = exportType === 'srt';
   cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
   if (cvSrtNote) {
     const speedMult = selectedFps <= 15 ? 3.0 : selectedFps <= 30 ? 2.5 : 2.0;
-    cvSrtNote.textContent = isVtt
+    cvSrtNote.textContent = isAss
+      ? `Advanced SubStation Alpha (.ass) supports 160 cols with 9px font and ${speedMult.toFixed(1)}× accelerated playback.`
+      : isVtt
       ? `WebVTT (.vtt) encodes ASCII frames as web-standard cues with ${speedMult.toFixed(1)}× accelerated playback.`
       : `SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with ${speedMult.toFixed(1)}× accelerated playback.`;
   }
   cvCfgRes.closest('.cv-stat-row').style.display = isSubtitle ? 'none' : '';
   const cols = cvSourceVideo
-    ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps)
-    : Math.min(SRT_MAX_COLS, cfg.cols || 40);
+    ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
+    : (isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40));
   cvCfgCols.textContent = isSubtitle
-    ? `${cols} cols · ${selectedFps} FPS`
+    ? `${cols} cols · ${selectedFps} FPS${isAss ? ' · 9px font' : ''}`
     : `${cfg.cols} cols`;
-  cvCfgFmt.textContent = isVtt ? 'WebVTT (.vtt) text' : isSrt ? 'SRT (.srt) text' : (detectMime().includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)');
+  cvCfgFmt.textContent = isAss
+    ? 'Advanced SubStation Alpha (.ass) text'
+    : isVtt
+    ? 'WebVTT (.vtt) text'
+    : isSrt
+    ? 'SRT (.srt) text'
+    : (detectMime().includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)');
   const saveLabel = $('cvSaveLabel');
-  if (saveLabel) saveLabel.textContent = isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : 'Download Video';
+  if (saveLabel) saveLabel.textContent = isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : 'Download Video';
 }
 
 function updateLongVideoWarning() {
@@ -1376,14 +1395,14 @@ function updateLongVideoWarning() {
   }
   const duration = cvSourceVideo.duration;
   const exportType = cvExportType.value;
-  const isSubtitle = exportType === 'srt' || exportType === 'vtt';
+  const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
   const fps = selectedFps;
   const cols = isSubtitle
-    ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps)
+    ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
     : Math.min(1000, cfg.cols);
   const size = isSubtitle
-    ? estimateSrtBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps)
+    ? estimateSrtBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
   cvWarning.style.display = 'flex';
   const summary = `${fmtTime(duration)} at ${fps} FPS is about ${Math.ceil(duration * fps).toLocaleString()} frames; estimated output about ${fmtBytes(size)}.`;
@@ -1425,9 +1444,10 @@ function detectMime() {
 async function chooseVideoFile(mimeType, suggestedName) {
   if (typeof window.showSaveFilePicker !== 'function') return null;
   const extension = suggestedName.slice(suggestedName.lastIndexOf('.'));
+  const isAss = extension === '.ass';
   const isVtt = extension === '.vtt';
   const isSrt = extension === '.srt';
-  const desc = isVtt ? 'WebVTT Subtitles (.vtt)' : isSrt ? 'SubRip Subtitles (.srt)' : 'Rendered video';
+  const desc = isAss ? 'Advanced SubStation Alpha Subtitles (.ass)' : isVtt ? 'WebVTT Subtitles (.vtt)' : isSrt ? 'SubRip Subtitles (.srt)' : 'Rendered video';
   try {
     const handle = await window.showSaveFilePicker({
       suggestedName,
@@ -1539,7 +1559,7 @@ function cvRefreshSettings() {
 }
 
 cvExportType.addEventListener('change', () => {
-  const isSubtitle = cvExportType.value === 'srt' || cvExportType.value === 'vtt';
+  const isSubtitle = cvExportType.value === 'srt' || cvExportType.value === 'vtt' || cvExportType.value === 'ass';
   if (isSubtitle && cvCfgFpsOverride.value === '60') {
     cvCfgFpsOverride.value = '24';
   }
@@ -1715,7 +1735,8 @@ cvStart.addEventListener('click', async () => {
   updateLongVideoWarning();
 
   const exportType = cvExportType.value;
-  const isSubtitle = exportType === 'srt' || exportType === 'vtt';
+  const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass';
+  const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt';
   const isSrt = exportType === 'srt';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
@@ -1725,16 +1746,18 @@ cvStart.addEventListener('click', async () => {
     : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
   const targetFps = selectedFps;
   const exportCols = isSubtitle
-    ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps)
+    ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : cfg.cols;
-  const exportCfg = isSubtitle ? { ...cfg, cols: exportCols } : cfg;
+  const exportCfg = isSubtitle
+    ? { ...cfg, cols: exportCols, fontSize: isAss ? 9 : (cfg.fontSize || 10) }
+    : cfg;
   const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
   const estimatedOutputBytes = isSubtitle
-    ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps)
+    ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : estimateVideoBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, resolution);
   const memoryExportLimit = (isSubtitle ? 96 : 192) * 1024 * 1024;
-  const mimeType = isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : detectMime();
-  const extension = isVtt ? 'vtt' : isSrt ? 'srt' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const mimeType = isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : detectMime();
+  const extension = isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
   const filename = `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
   let writable = null;
   let temporaryExport = null;
@@ -1773,13 +1796,13 @@ cvStart.addEventListener('click', async () => {
   cvStartProgressClock();
 
   if (isSubtitle) {
-    const labelPrefix = isVtt ? 'WEBVTT' : 'SRT';
+    const labelPrefix = isAss ? 'ASS' : isVtt ? 'WEBVTT' : 'SRT';
     cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT PROGRESS`;
     try {
     const subtitleSpeed = targetFps <= 15 ? 3.0 : targetFps <= 30 ? 2.5 : 2.0;
     cvSrtExporter.start(cvSourceVideo, { ...exportCfg, monoColor: state.monoColor }, {
       targetFps,
-      format: isVtt ? 'vtt' : 'srt',
+      format: isAss ? 'ass' : isVtt ? 'vtt' : 'srt',
       speed: subtitleSpeed,
       writable,
       onProgress(pct, _elapsed, _eta, frameNum, frameTotal) {
@@ -1821,13 +1844,14 @@ cvStart.addEventListener('click', async () => {
         cvProgressFrames.textContent = `${totalFrames.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
         cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT COMPLETE`;
         cvDoneSection.style.display = 'flex';
-        const formatName = isVtt ? 'WebVTT' : 'SRT';
+        const formatName = isAss ? 'ASS' : isVtt ? 'WebVTT' : 'SRT';
         const colsDisplay = result?.cols || exportCols;
+        const fontNote = isAss ? '  ·  9px font' : '';
         cvDoneMeta.textContent = temporaryExport
-          ? `${fmtBytes(estimatedOutputBytes)}  ·  ${formatName} ready to download  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`
+          ? `${fmtBytes(estimatedOutputBytes)}  ·  ${formatName} ready to download  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`
           : result?.savedToDisk
-          ? `Saved to selected file  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`
-          : `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`;
+          ? `Saved to selected file  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`
+          : `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`;
         showToast(temporaryExport ? `${formatName} ready to download` : result?.savedToDisk ? `${formatName} saved to file` : `${formatName} ready to download`);
       },
       onError(message) {
@@ -1933,11 +1957,11 @@ cvSave.addEventListener('click', () => {
     return;
   }
   if (!cvBlob) return;
-  const ext = cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
+  const ext = (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
   try {
     download(`ascili-${ts}.${ext}`, cvBlob, cvMimeType);
-    showToast(ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
+    showToast(ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
   } catch (error) {
     cvShowExportError(error?.message || error);
   }
