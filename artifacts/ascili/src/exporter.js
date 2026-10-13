@@ -804,22 +804,32 @@ export class AsciliSrtExporter {
     this._running = false;
     this._aborted = false;
     this._writable = null;
+    this._writeChain = Promise.resolve();
     this._chunks = [];
     this._bufferedBytes = 0;
     this._maxBufferedBytes = 128 * 1024 * 1024;
     this._maxOutputBytes = 1_000_000_000;
     this._startWall = 0;
     this._cleanup = null;
+    this._outputError = null;
   }
 
   start(videoEl, cfg, opts = {}) {
-    const { targetFps = 30, writable = null, onProgress, onComplete, onError } = opts;
+    const {
+      targetFps = 15,
+      writable = null,
+      format = 'srt',
+      speed = 2.5,
+      onProgress,
+      onComplete,
+      onError
+    } = opts;
     if (this._running) return;
 
+    const isVtt = format === 'vtt';
     const videoWidth = videoEl.videoWidth || 640;
     const videoHeight = videoEl.videoHeight || 480;
-    // SRT stores a textual copy of every sampled grid. Bound its pixel count
-    // so high-resolution video presets cannot create multi-hundred-GB files.
+    // Bound pixel count for fast, readable ASCII subtitles
     const cols = Math.min(40, Math.max(20, Math.round(cfg.cols || 80)));
     const rows = Math.max(1, Math.round(cols * (videoHeight / videoWidth) * 0.45));
     const duration = Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? videoEl.duration : 0;
@@ -828,50 +838,60 @@ export class AsciliSrtExporter {
       return;
     }
 
+    const targetFpsVal = Math.min(60, Math.max(1, parseFloat(targetFps) || 15));
+    const sampleInterval = 1 / targetFpsVal;
     const charset = Array.from(cfg.charSet || CHAR_SETS.standard);
     const lastChar = charset.length - 1;
     const invert = Boolean(cfg.invertChars);
     const colorMode = cfg.colorMode || 'monochrome';
     const monoColor = cfg.monoColor || '#39ff52';
     const sample = getOffscreen(cols, rows);
-    const frameCount = Math.max(1, Math.ceil(duration * targetFps));
-    const frameDuration = 1 / targetFps;
     const parts = [];
-    const textEncoder = new TextEncoder();
     let bufferedBytes = 0;
     let outputBytes = 0;
     let batch = [];
     let batchBytes = 0;
-    let frame = 0;
     let cueNumber = 0;
     let pendingText = null;
     let pendingStart = 0;
-    let seekTimer = null;
-    let cancelSeek = null;
-    let nextFrameAt = 0;
+    let lastSampleTime = -1;
     let lastSourceTime = -1;
-    let lastSourceAdvanceAt = 0;
+    let lastSourceAdvanceAt = performance.now();
+    let cancelSeek = null;
+    let animId = null;
+    let rvfcId = null;
+    let finishing = false;
 
     this._running = true;
     this._aborted = false;
     this._writable = writable;
+    this._writeChain = Promise.resolve();
     this._chunks = parts;
     this._bufferedBytes = 0;
+    this._outputError = null;
     this._startWall = performance.now();
 
-    const timestamp = seconds => {
+    const timestamp = (seconds, vtt = isVtt) => {
       const milliseconds = Math.max(0, Math.round(seconds * 1000));
       const hours = Math.floor(milliseconds / 3_600_000);
       const minutes = Math.floor((milliseconds % 3_600_000) / 60_000);
       const secondsPart = Math.floor((milliseconds % 60_000) / 1000);
       const millisPart = milliseconds % 1000;
-      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secondsPart).padStart(2, '0')},${String(millisPart).padStart(3, '0')}`;
+      const sep = vtt ? '.' : ',';
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secondsPart).padStart(2, '0')}${sep}${String(millisPart).padStart(3, '0')}`;
     };
+
+    if (isVtt) {
+      batch.push('WEBVTT\n\n');
+      batchBytes += 16;
+    }
 
     const escapeText = character => character.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const safeChars = charset.map(escapeText);
     const hexBytes = Array.from({ length: 256 }, (_, value) => value.toString(16).padStart(2, '0'));
-    const rgbHex = (red, green, blue) => `#${hexBytes[Math.max(0, Math.min(255, Math.round(red)))]}${hexBytes[Math.max(0, Math.min(255, Math.round(green)))]}${hexBytes[Math.max(0, Math.min(255, Math.round(blue)))]}`;
+    const rgbHex = (red, green, blue) => `#${hexBytes[red]}${hexBytes[green]}${hexBytes[blue]}`;
+
+    // Precompute adjustment LUT for brightness, contrast, and gamma
     const doAdjust = Boolean(cfg.brightness || cfg.contrast || cfg.gamma || cfg.saturation);
     const brightnessOffset = (cfg.brightness || 0) * 2.55;
     const contrast = cfg.contrast || 0;
@@ -881,45 +901,74 @@ export class AsciliSrtExporter {
     const gammaValue = gamma > 0 ? 1 / (1 + gamma / 100) : gamma < 0 ? 1 + Math.abs(gamma) / 100 : 1;
     const lut = getAnsiColorLut(colorMode);
 
+    const adjustLut = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) {
+      let val = v;
+      if (cfg.brightness) val += brightnessOffset;
+      if (contrast) val = contrastFactor * (val - 128) + 128;
+      if (gamma) val = 255 * Math.pow(Math.max(0, Math.min(255, val)) / 255, gammaValue);
+      adjustLut[v] = Math.max(0, Math.min(255, Math.round(val)));
+    }
+
+    const isMono = colorMode === 'monochrome';
+    const monoLower = monoColor.toLowerCase();
+
     const renderText = () => {
       sample.ctx.drawImage(videoEl, 0, 0, cols, rows);
       const pixels = sample.ctx.getImageData(0, 0, cols, rows).data;
       const lines = new Array(rows);
+
+      if (isMono) {
+        // Fast monochrome path: 1 tag per row, avoids 100s of tag allocations
+        for (let row = 0; row < rows; row++) {
+          let lineStr = '';
+          const rowOffset = row * cols * 4;
+          for (let col = 0; col < cols; col++) {
+            const index = rowOffset + col * 4;
+            let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
+            if (doAdjust) {
+              red = adjustLut[red]; green = adjustLut[green]; blue = adjustLut[blue];
+              if (saturation !== 1) {
+                const gray = 0.299 * red + 0.587 * green + 0.114 * blue;
+                red = gray + saturation * (red - gray);
+                green = gray + saturation * (green - gray);
+                blue = gray + saturation * (blue - gray);
+              }
+            }
+            const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+            let charIndex = Math.round(luminance * lastChar);
+            if (invert) charIndex = lastChar - charIndex;
+            lineStr += safeChars[charIndex] || ' ';
+          }
+          lines[row] = `<font color="${monoLower}">${lineStr}</font>`;
+        }
+        return lines.join('\n');
+      }
+
+      // Grayscale / Truecolor / ANSI path
       for (let row = 0; row < rows; row++) {
         const runs = [];
         let runColor = null;
         let runText = '';
+        const rowOffset = row * cols * 4;
         for (let col = 0; col < cols; col++) {
-          const index = (row * cols + col) * 4;
+          const index = rowOffset + col * 4;
           let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
           if (doAdjust) {
-            red += brightnessOffset; green += brightnessOffset; blue += brightnessOffset;
-            if (contrast) {
-              red = contrastFactor * (red - 128) + 128;
-              green = contrastFactor * (green - 128) + 128;
-              blue = contrastFactor * (blue - 128) + 128;
-            }
+            red = adjustLut[red]; green = adjustLut[green]; blue = adjustLut[blue];
             if (saturation !== 1) {
               const gray = 0.299 * red + 0.587 * green + 0.114 * blue;
-              red = gray + saturation * (red - gray);
-              green = gray + saturation * (green - gray);
-              blue = gray + saturation * (blue - gray);
+              red = Math.max(0, Math.min(255, Math.round(gray + saturation * (red - gray))));
+              green = Math.max(0, Math.min(255, Math.round(gray + saturation * (green - gray))));
+              blue = Math.max(0, Math.min(255, Math.round(gray + saturation * (blue - gray))));
             }
-            if (gamma) {
-              red = 255 * Math.pow(Math.max(0, Math.min(255, red)) / 255, gammaValue);
-              green = 255 * Math.pow(Math.max(0, Math.min(255, green)) / 255, gammaValue);
-              blue = 255 * Math.pow(Math.max(0, Math.min(255, blue)) / 255, gammaValue);
-            }
-            red = Math.max(0, Math.min(255, red));
-            green = Math.max(0, Math.min(255, green));
-            blue = Math.max(0, Math.min(255, blue));
           }
           const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
           let charIndex = Math.round(luminance * lastChar);
           if (invert) charIndex = lastChar - charIndex;
-          let color = monoColor;
+          let color = monoLower;
           if (colorMode === 'grayscale') {
-            const gray = Math.round(luminance * 255);
+            const gray = Math.max(0, Math.min(255, Math.round(luminance * 255)));
             color = rgbHex(gray, gray, gray);
           } else if (colorMode === 'truecolor') {
             color = rgbHex(red, green, blue);
@@ -928,12 +977,11 @@ export class AsciliSrtExporter {
             color = rgbHex(lut[lutIndex], lut[lutIndex + 1], lut[lutIndex + 2]);
           }
 
-          const nextColor = color.toLowerCase();
-          if (runColor !== null && nextColor !== runColor) {
+          if (runColor !== null && color !== runColor) {
             runs.push(`<font color="${runColor}">${runText}</font>`);
             runText = '';
           }
-          runColor = nextColor;
+          runColor = color;
           runText += safeChars[charIndex] || ' ';
         }
         if (runColor !== null) runs.push(`<font color="${runColor}">${runText}</font>`);
@@ -942,15 +990,16 @@ export class AsciliSrtExporter {
       return lines.join('\n');
     };
 
-    const flushBatch = async () => {
+    const flushBatch = () => {
       if (batch.length === 0) return;
       const text = batch.join('');
       batch = [];
       batchBytes = 0;
-      const encodedBytes = textEncoder.encode(text).byteLength;
-      outputBytes += encodedBytes;
+      outputBytes += text.length;
       if (this._writable) {
-        await this._writable.write(text);
+        this._writeChain = this._writeChain.then(() => this._writable.write(text)).catch(err => {
+          this._outputError = err;
+        });
       } else {
         bufferedBytes += text.length * 2;
         parts.push(text);
@@ -958,39 +1007,41 @@ export class AsciliSrtExporter {
       }
     };
 
-    // SRT does not need a separate cue for every sampled frame. Coalesce
-    // consecutive identical ASCII frames into one longer cue; static and
-    // low-motion footage can otherwise repeat the same large payload 26x/s.
     const queueCue = (text, start, end) => {
       const cue = `${++cueNumber}\n${timestamp(start)} --> ${timestamp(end)}\n${text}\n\n`;
       batch.push(cue);
       batchBytes += cue.length * 2;
+      if (batchBytes >= 256 * 1024) flushBatch();
     };
 
     const finish = async () => {
+      if (finishing) return;
+      finishing = true;
       this._running = false;
       this._cleanup?.();
+      try { videoEl.playbackRate = 1.0; } catch {}
       if (this._aborted) {
-        try { await this._writable?.abort(); } catch {}
+        try { await this._writeChain; await this._writable?.abort(); } catch {}
         this._writable = null;
         this._chunks = [];
         return;
       }
       try {
-        await flushBatch();
         if (pendingText !== null) {
           queueCue(pendingText, pendingStart, duration);
           pendingText = null;
         }
-        await flushBatch();
+        flushBatch();
+        await this._writeChain;
+        const resultMime = isVtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip';
         if (this._writable) {
           await this._writable.close();
           this._writable = null;
-          onComplete?.(null, 'application/x-subrip', { savedToDisk: true, cols, rows });
+          onComplete?.(null, resultMime, { savedToDisk: true, cols, rows, format: isVtt ? 'vtt' : 'srt' });
         } else {
-          const blob = new Blob(parts, { type: 'text/plain;charset=utf-8' });
+          const blob = new Blob(parts, { type: isVtt ? 'text/vtt;charset=utf-8' : 'text/plain;charset=utf-8' });
           this._chunks = [];
-          onComplete?.(blob, 'application/x-subrip', { savedToDisk: false, cols, rows });
+          onComplete?.(blob, resultMime, { savedToDisk: false, cols, rows, format: isVtt ? 'vtt' : 'srt' });
         }
       } catch (error) {
         try { await this._writable?.abort(); } catch {}
@@ -1000,57 +1051,57 @@ export class AsciliSrtExporter {
       }
     };
 
-    const processFrame = async () => {
-      if (!this._running) return;
-      clearTimeout(seekTimer);
-      try {
-        const sourceTime = Math.min(duration, videoEl.currentTime);
-        if (sourceTime > lastSourceTime + 0.0001) {
-          lastSourceTime = sourceTime;
-          lastSourceAdvanceAt = performance.now();
-        } else if (performance.now() - lastSourceAdvanceAt > 10000 && sourceTime < duration) {
-          throw new Error('Timed out while decoding the source video. Try a browser-supported video format.');
-        }
+    const processTick = () => {
+      if (!this._running || finishing) return;
 
-        const start = frame * frameDuration;
+      const sourceTime = Math.min(duration, videoEl.currentTime);
+      if (sourceTime > lastSourceTime + 0.0001) {
+        lastSourceTime = sourceTime;
+        lastSourceAdvanceAt = performance.now();
+      } else if (performance.now() - lastSourceAdvanceAt > 15000 && sourceTime < duration) {
+        if (videoEl.paused && this._running) videoEl.play().catch(() => {});
+        else if (performance.now() - lastSourceAdvanceAt > 20000) {
+          this._running = false;
+          finish();
+          onError?.('Timed out while decoding the source video. Try a browser-supported video format.');
+          return;
+        }
+      }
+
+      // Sample whenever sourceTime has advanced by at least sampleInterval (or on first / last frame)
+      if (lastSampleTime < 0 || sourceTime - lastSampleTime >= sampleInterval - 0.002 || sourceTime >= duration - 0.05) {
         const text = renderText();
         if (pendingText === null) {
           pendingText = text;
-          pendingStart = start;
+          pendingStart = Math.max(0, sourceTime);
         } else if (text !== pendingText) {
-          queueCue(pendingText, pendingStart, start);
+          queueCue(pendingText, pendingStart, sourceTime);
           pendingText = text;
-          pendingStart = start;
+          pendingStart = sourceTime;
         }
-        frame++;
+        lastSampleTime = sourceTime;
+      }
 
-        if (batchBytes >= 256 * 1024) {
-          videoEl.pause();
-          await flushBatch();
-          if (this._running) {
-            await videoEl.play();
-            lastSourceAdvanceAt = performance.now();
-            nextFrameAt = performance.now();
-          }
-        }
-        const elapsed = (performance.now() - this._startWall) / 1000;
-        const progress = Math.min(1, frame / frameCount);
-        onProgress?.(progress, elapsed, progress > 0 ? elapsed / progress * (1 - progress) : null, frame, frameCount);
-        if (frame >= frameCount) {
-          await finish();
-          return;
-        }
+      const elapsed = (performance.now() - this._startWall) / 1000;
+      const progress = Math.min(1, sourceTime / duration);
+      const estTotalFrames = Math.max(1, Math.ceil(duration * targetFpsVal));
+      const currentFrame = Math.min(estTotalFrames, Math.round(sourceTime * targetFpsVal));
+      onProgress?.(progress, elapsed, progress > 0.002 ? (elapsed / progress) * (1 - progress) : null, currentFrame, estTotalFrames);
 
-        nextFrameAt += 1000 / targetFps;
-        const now = performance.now();
-        if (nextFrameAt < now) nextFrameAt = now + 1000 / targetFps;
-        seekTimer = setTimeout(processFrame, Math.max(0, nextFrameAt - now));
-      } catch (error) {
-        if (this._aborted) return;
-        this._running = false;
-        this._aborted = true;
-        await finish();
-        onError?.('SRT frame export failed: ' + error.message);
+      if (videoEl.ended || sourceTime >= duration - 0.05) {
+        finish();
+        return;
+      }
+
+      scheduleNext();
+    };
+
+    const scheduleNext = () => {
+      if (!this._running || finishing) return;
+      if (typeof videoEl.requestVideoFrameCallback === 'function') {
+        rvfcId = videoEl.requestVideoFrameCallback(processTick);
+      } else {
+        animId = requestAnimationFrame(processTick);
       }
     };
 
@@ -1081,25 +1132,36 @@ export class AsciliSrtExporter {
           });
         }
         if (!this._running) return;
+        try {
+          videoEl.playbackRate = Math.min(4.0, Math.max(1.0, parseFloat(speed) || 2.5));
+        } catch {}
         await videoEl.play();
         if (!this._running) return;
         lastSourceTime = -1;
+        lastSampleTime = -1;
         lastSourceAdvanceAt = performance.now();
-        nextFrameAt = performance.now();
-        processFrame();
+        scheduleNext();
       } catch (error) {
         if (!this._running) return;
         this._running = false;
         this._aborted = true;
         await finish();
-        onError?.('SRT source playback failed: ' + error.message);
+        onError?.('Subtitle source playback failed: ' + error.message);
       }
     };
 
     this._cleanup = () => {
-      clearTimeout(seekTimer);
+      if (rvfcId !== null && typeof videoEl.cancelVideoFrameCallback === 'function') {
+        videoEl.cancelVideoFrameCallback(rvfcId);
+        rvfcId = null;
+      }
+      if (animId !== null) {
+        cancelAnimationFrame(animId);
+        animId = null;
+      }
       cancelSeek?.();
       this._cleanup = null;
+      try { videoEl.playbackRate = 1.0; } catch {}
       videoEl.pause();
     };
 
@@ -1116,6 +1178,8 @@ export class AsciliSrtExporter {
     this._chunks = [];
   }
 }
+
+export { AsciliSrtExporter as AsciliVttExporter, AsciliSrtExporter as AsciliSubtitleExporter };
 
 // ─── AsciliLiveRecorder ─────────────────────────────────────────────────────
 // Records the live ASCII output from any source (webcam, screen, file).
