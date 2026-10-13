@@ -812,6 +812,9 @@ export class AsciliSrtExporter {
     this._startWall = 0;
     this._cleanup = null;
     this._outputError = null;
+    this._wakeLock = null;
+    this._ticker = null;
+    this.canvas = null;
   }
 
   start(videoEl, cfg, opts = {}) {
@@ -839,6 +842,7 @@ export class AsciliSrtExporter {
     }
 
     const targetFpsVal = Math.min(60, Math.max(1, parseFloat(targetFps) || 15));
+    const effectiveSpeed = Math.min(4.0, Math.max(1.0, parseFloat(speed) || (targetFpsVal <= 15 ? 3.0 : targetFpsVal <= 30 ? 2.5 : 2.0)));
     const sampleInterval = 1 / targetFpsVal;
     const charset = Array.from(cfg.charSet || CHAR_SETS.standard);
     const lastChar = charset.length - 1;
@@ -846,6 +850,7 @@ export class AsciliSrtExporter {
     const colorMode = cfg.colorMode || 'monochrome';
     const monoColor = cfg.monoColor || '#39ff52';
     const sample = getOffscreen(cols, rows);
+    this.canvas = sample.canvas;
     const parts = [];
     let bufferedBytes = 0;
     let outputBytes = 0;
@@ -861,6 +866,7 @@ export class AsciliSrtExporter {
     let animId = null;
     let rvfcId = null;
     let finishing = false;
+    let isScheduled = false;
 
     this._running = true;
     this._aborted = false;
@@ -870,6 +876,71 @@ export class AsciliSrtExporter {
     this._bufferedBytes = 0;
     this._outputError = null;
     this._startWall = performance.now();
+
+    // Acquire wake lock to keep screen and browser active during long conversions
+    try {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => {
+          this._wakeLock = lock;
+        }).catch(() => {});
+      }
+    } catch {}
+
+    // Dedicated non-throttled worker timer to ensure steady frame processing in background tabs
+    const frameIntervalMs = Math.max(8, Math.round(1000 / (targetFpsVal * effectiveSpeed * 1.5)));
+    try {
+      const tickerBlob = new Blob([`
+        let t = null;
+        self.onmessage = e => {
+          if (e.data === 'start') {
+            if (t) clearInterval(t);
+            t = setInterval(() => self.postMessage(1), ${frameIntervalMs});
+          } else if (e.data === 'stop') {
+            if (t) clearInterval(t);
+            t = null;
+          }
+        };
+      `], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(tickerBlob);
+      const tickerWorker = new Worker(workerUrl);
+      tickerWorker.onmessage = () => {
+        if (this._running && !finishing) processTick();
+      };
+      this._ticker = {
+        start: () => {
+          try { tickerWorker.postMessage('start'); } catch {}
+        },
+        stop: () => {
+          try {
+            tickerWorker.postMessage('stop');
+            tickerWorker.terminate();
+            URL.revokeObjectURL(workerUrl);
+          } catch {}
+        }
+      };
+    } catch {
+      let id = null;
+      this._ticker = {
+        start: () => {
+          if (id) clearInterval(id);
+          id = setInterval(() => {
+            if (this._running && !finishing) processTick();
+          }, frameIntervalMs);
+        },
+        stop: () => {
+          if (id) clearInterval(id);
+          id = null;
+        }
+      };
+    }
+
+    const onEnded = () => {
+      if (this._running && !finishing) {
+        processTick();
+        finish();
+      }
+    };
+    videoEl.addEventListener('ended', onEnded);
 
     const timestamp = (seconds, vtt = isVtt) => {
       const milliseconds = Math.max(0, Math.round(seconds * 1000));
@@ -968,10 +1039,13 @@ export class AsciliSrtExporter {
           if (invert) charIndex = lastChar - charIndex;
           let color = monoLower;
           if (colorMode === 'grayscale') {
-            const gray = Math.max(0, Math.min(255, Math.round(luminance * 255)));
+            const gray = Math.round(luminance * 15) * 17;
             color = rgbHex(gray, gray, gray);
           } else if (colorMode === 'truecolor') {
-            color = rgbHex(red, green, blue);
+            const qr = (red >> 3) << 3;
+            const qg = (green >> 3) << 3;
+            const qb = (blue >> 3) << 3;
+            color = rgbHex(qr, qg, qb);
           } else if (lut) {
             const lutIndex = (((Math.round(red) >> 3) << 10) | ((Math.round(green) >> 3) << 5) | (Math.round(blue) >> 3)) * 3;
             color = rgbHex(lut[lutIndex], lut[lutIndex + 1], lut[lutIndex + 2]);
@@ -1018,6 +1092,10 @@ export class AsciliSrtExporter {
       if (finishing) return;
       finishing = true;
       this._running = false;
+      this._ticker?.stop();
+      this._ticker = null;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
       this._cleanup?.();
       try { videoEl.playbackRate = 1.0; } catch {}
       if (this._aborted) {
@@ -1033,6 +1111,7 @@ export class AsciliSrtExporter {
         }
         flushBatch();
         await this._writeChain;
+        if (this._outputError) throw this._outputError;
         const resultMime = isVtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip';
         if (this._writable) {
           await this._writable.close();
@@ -1097,11 +1176,18 @@ export class AsciliSrtExporter {
     };
 
     const scheduleNext = () => {
-      if (!this._running || finishing) return;
+      if (!this._running || finishing || isScheduled) return;
+      isScheduled = true;
       if (typeof videoEl.requestVideoFrameCallback === 'function') {
-        rvfcId = videoEl.requestVideoFrameCallback(processTick);
+        rvfcId = videoEl.requestVideoFrameCallback(() => {
+          isScheduled = false;
+          processTick();
+        });
       } else {
-        animId = requestAnimationFrame(processTick);
+        animId = requestAnimationFrame(() => {
+          isScheduled = false;
+          processTick();
+        });
       }
     };
 
@@ -1133,13 +1219,14 @@ export class AsciliSrtExporter {
         }
         if (!this._running) return;
         try {
-          videoEl.playbackRate = Math.min(4.0, Math.max(1.0, parseFloat(speed) || 2.5));
+          videoEl.playbackRate = effectiveSpeed;
         } catch {}
         await videoEl.play();
         if (!this._running) return;
         lastSourceTime = -1;
         lastSampleTime = -1;
         lastSourceAdvanceAt = performance.now();
+        this._ticker?.start();
         scheduleNext();
       } catch (error) {
         if (!this._running) return;
@@ -1151,6 +1238,11 @@ export class AsciliSrtExporter {
     };
 
     this._cleanup = () => {
+      this._ticker?.stop();
+      this._ticker = null;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
+      videoEl.removeEventListener('ended', onEnded);
       if (rvfcId !== null && typeof videoEl.cancelVideoFrameCallback === 'function') {
         videoEl.cancelVideoFrameCallback(rvfcId);
         rvfcId = null;
@@ -1159,7 +1251,9 @@ export class AsciliSrtExporter {
         cancelAnimationFrame(animId);
         animId = null;
       }
+      isScheduled = false;
       cancelSeek?.();
+      this.canvas = null;
       this._cleanup = null;
       try { videoEl.playbackRate = 1.0; } catch {}
       videoEl.pause();
@@ -1172,6 +1266,10 @@ export class AsciliSrtExporter {
   stop() {
     this._aborted = true;
     this._running = false;
+    this._ticker?.stop();
+    this._ticker = null;
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
     this._cleanup?.();
     this._writable?.abort().catch(() => {});
     this._writable = null;

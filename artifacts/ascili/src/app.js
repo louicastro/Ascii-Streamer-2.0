@@ -1348,13 +1348,14 @@ function updateExportModeUI() {
   const isVtt = exportType === 'vtt';
   const isSrt = exportType === 'srt';
   cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
   if (cvSrtNote) {
+    const speedMult = selectedFps <= 15 ? 3.0 : selectedFps <= 30 ? 2.5 : 2.0;
     cvSrtNote.textContent = isVtt
-      ? 'WebVTT (.vtt) encodes ASCII frames as web-standard cues with 2.5× accelerated playback.'
-      : 'SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with 2.5× accelerated playback.';
+      ? `WebVTT (.vtt) encodes ASCII frames as web-standard cues with ${speedMult.toFixed(1)}× accelerated playback.`
+      : `SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with ${speedMult.toFixed(1)}× accelerated playback.`;
   }
   cvCfgRes.closest('.cv-stat-row').style.display = isSubtitle ? 'none' : '';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isSubtitle ? 15 : 60);
   const cols = cvSourceVideo
     ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps)
     : Math.min(SRT_MAX_COLS, cfg.cols || 40);
@@ -1384,7 +1385,9 @@ function updateLongVideoWarning() {
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
   cvWarning.style.display = 'flex';
   const summary = `${fmtTime(duration)} at ${fps} FPS is about ${Math.ceil(duration * fps).toLocaleString()} frames; estimated output about ${fmtBytes(size)}.`;
-  const speedNote = isSubtitle ? ' 2.5× accelerated conversion active.' : '';
+  const speedMult = fps <= 15 ? 3.0 : fps <= 30 ? 2.5 : 2.0;
+  const estRenderTime = fmtTime(duration / speedMult);
+  const speedNote = isSubtitle ? ` ${speedMult.toFixed(1)}× accelerated conversion active (finishes in ~${estRenderTime}).` : '';
   cvWarningText.textContent = `${summary}${speedNote} Keep tab open during conversion.`;
 }
 
@@ -1420,11 +1423,14 @@ function detectMime() {
 async function chooseVideoFile(mimeType, suggestedName) {
   if (typeof window.showSaveFilePicker !== 'function') return null;
   const extension = suggestedName.slice(suggestedName.lastIndexOf('.'));
+  const isVtt = extension === '.vtt';
+  const isSrt = extension === '.srt';
+  const desc = isVtt ? 'WebVTT Subtitles (.vtt)' : isSrt ? 'SubRip Subtitles (.srt)' : 'Rendered video';
   try {
     const handle = await window.showSaveFilePicker({
       suggestedName,
       types: [{
-        description: 'Rendered video',
+        description: desc,
         accept: { [mimeType.split(';')[0]]: [extension] },
       }],
     });
@@ -1607,6 +1613,7 @@ function cvSetFile(file) {
 
 [cvCfgRes, cvCfgFpsOverride].forEach(control => {
   control.addEventListener('change', () => {
+    updateExportModeUI();
     updateLongVideoWarning();
   });
 });
@@ -1767,10 +1774,11 @@ cvStart.addEventListener('click', async () => {
     const labelPrefix = isVtt ? 'WEBVTT' : 'SRT';
     cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT PROGRESS`;
     try {
+    const subtitleSpeed = targetFps <= 15 ? 3.0 : targetFps <= 30 ? 2.5 : 2.0;
     cvSrtExporter.start(cvSourceVideo, { ...exportCfg, monoColor: state.monoColor }, {
       targetFps,
       format: isVtt ? 'vtt' : 'srt',
-      speed: 2.5,
+      speed: subtitleSpeed,
       writable,
       onProgress(pct, _elapsed, _eta, frameNum, frameTotal) {
         cvCurrentProgress = pct;
@@ -1779,6 +1787,13 @@ cvStart.addEventListener('click', async () => {
         cvProgressFill.style.width = (pct * 100).toFixed(1) + '%';
         cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
         cvUpdateProgressClock();
+
+        if (cvPreviewCanvas && cvSourceVideo) {
+          const pCtx = cvPreviewCanvas.getContext('2d');
+          if (pCtx) {
+            pCtx.drawImage(cvSourceVideo, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
+          }
+        }
       },
       async onComplete(blob, resultMime, result) {
         cvStopProgressClock();
@@ -1795,7 +1810,7 @@ cvStart.addEventListener('click', async () => {
         cvBlob = blob;
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
-        cvSave.style.display = temporaryExport || !result.savedToDisk ? '' : 'none';
+        cvSave.style.display = temporaryExport || !result?.savedToDisk ? '' : 'none';
         cvConvertAnother.style.display = '';
         cvProgressFill.style.width = '100%';
         cvProgressPct.textContent = '100%';
@@ -1805,12 +1820,13 @@ cvStart.addEventListener('click', async () => {
         cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT COMPLETE`;
         cvDoneSection.style.display = 'flex';
         const formatName = isVtt ? 'WebVTT' : 'SRT';
+        const colsDisplay = result?.cols || exportCols;
         cvDoneMeta.textContent = temporaryExport
-          ? `${fmtBytes(estimatedOutputBytes)}  ·  ${formatName} ready to download  ·  ${targetFps} FPS  ·  ${result.cols} cols`
-          : result.savedToDisk
-          ? `Saved to selected file  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${result.cols} cols`
-          : `${fmtBytes(blob.size)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${result.cols} cols`;
-        showToast(temporaryExport ? `${formatName} ready to download` : result.savedToDisk ? `${formatName} saved to file` : `${formatName} ready to download`);
+          ? `${fmtBytes(estimatedOutputBytes)}  ·  ${formatName} ready to download  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`
+          : result?.savedToDisk
+          ? `Saved to selected file  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`
+          : `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols`;
+        showToast(temporaryExport ? `${formatName} ready to download` : result?.savedToDisk ? `${formatName} saved to file` : `${formatName} ready to download`);
       },
       onError(message) {
         cvStop.style.display = 'none';
