@@ -830,15 +830,16 @@ export class AsciliSrtExporter {
     } = opts;
     if (this._running) return;
 
+    const isYtt = format === 'ytt';
     const isYoutube = format === 'youtube';
     const isAss = format === 'ass';
     const isVtt = format === 'vtt' || isYoutube;
     const isSrt = format === 'srt';
     const videoWidth = videoEl.videoWidth || 640;
     const videoHeight = videoEl.videoHeight || 480;
-    // Bound pixel count: up to 32 cols for YouTube, 160 cols for ASS, 40 cols for standard SRT/VTT
-    const maxCols = isYoutube ? 32 : isAss ? 160 : 40;
-    const defaultCols = isYoutube ? 30 : isAss ? 160 : 80;
+    // Bound pixel count: up to 100 cols for YTT, 160 cols for ASS, 32 for basic YouTube VTT, 40 for standard SRT/VTT
+    const maxCols = isAss ? 160 : isYtt ? 100 : isYoutube ? 32 : 40;
+    const defaultCols = isAss ? 160 : isYtt ? (cfg.cols && cfg.cols >= 80 ? Math.min(100, cfg.cols) : 80) : isYoutube ? 30 : 80;
     const cols = Math.min(maxCols, Math.max(16, Math.round(isYoutube ? (cfg.cols ? Math.min(cfg.cols, 32) : 30) : (cfg.cols || defaultCols))));
     const calculatedRows = Math.max(1, Math.round(cols * (videoHeight / videoWidth) * 0.45));
     const rows = isYoutube ? Math.min(4, Math.max(2, calculatedRows)) : calculatedRows;
@@ -849,15 +850,18 @@ export class AsciliSrtExporter {
       return;
     }
 
-    const targetFpsVal = isYoutube
-      ? Math.min(5, Math.max(1, parseFloat(targetFps) || 2))
-      : Math.min(60, Math.max(1, parseFloat(targetFps) || 15));
-    const effectiveSpeed = Math.min(4.0, Math.max(1.0, parseFloat(speed) || (targetFpsVal <= 15 ? 3.0 : targetFpsVal <= 30 ? 2.5 : 2.0)));
+    // Guard against YouTube crashes on long videos (14min = 840s) by capping total cues under ~1800
+    const rawFps = parseFloat(targetFps) || (isYtt || isYoutube ? 2 : 15);
+    const maxSafeFps = (isYtt || isYoutube) && duration > 240
+      ? Math.min(rawFps, Math.max(1, Math.floor(1800 / duration)))
+      : rawFps;
+    const targetFpsVal = Math.min(60, Math.max(1, maxSafeFps));
+    const effectiveSpeed = Math.min(4.0, Math.max(1.0, parseFloat(speed) || (targetFpsVal <= 5 ? 3.0 : targetFpsVal <= 15 ? 3.0 : targetFpsVal <= 30 ? 2.5 : 2.0)));
     const sampleInterval = 1 / targetFpsVal;
     const charset = Array.from(cfg.charSet || CHAR_SETS.standard);
     const lastChar = charset.length - 1;
     const invert = Boolean(cfg.invertChars);
-    const colorMode = isYoutube ? 'monochrome' : (cfg.colorMode || 'monochrome');
+    const colorMode = (isYoutube || isYtt) ? 'monochrome' : (cfg.colorMode || 'monochrome');
     const monoColor = cfg.monoColor || '#39ff52';
     const sample = getOffscreen(cols, rows);
     this.canvas = sample.canvas;
@@ -977,7 +981,23 @@ export class AsciliSrtExporter {
     const rgbHex = (red, green, blue) => `#${hexBytes[red]}${hexBytes[green]}${hexBytes[blue]}`;
     const assHex = (red, green, blue) => `&H${hexBytes[blue]}${hexBytes[green]}${hexBytes[red]}&`.toUpperCase();
 
-    if (isAss) {
+    if (isYtt) {
+      const monoClean = monoColor.startsWith('#') ? monoColor : `#${monoColor}`;
+      const yttSz = Math.max(0, Math.min(100, Math.round((Math.min(10, Math.max(1, cfg.fontSize || 1)) - 1) * 11)));
+      const yttHeader = [
+        '<?xml version="1.0" encoding="utf-8" ?>',
+        '<timedtext format="3">',
+        '<head>',
+        `  <pen id="1" fs="3" sz="${yttSz}" fc="${monoClean}"/>`,
+        `  <wp id="1" ap="0" ah="0" av="0" rc="${rows}" cc="${cols}"/>`,
+        '  <ws id="1" mh="2" ju="0"/>',
+        '</head>',
+        '<body>',
+        ''
+      ].join('\n');
+      batch.push(yttHeader);
+      batchBytes += yttHeader.length * 2;
+    } else if (isAss) {
       const playResX = videoWidth || 1920;
       const playResY = videoHeight || 1080;
       const monoClean = monoColor.replace('#', '');
@@ -1015,7 +1035,8 @@ export class AsciliSrtExporter {
     const escapeText = character => character.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const escapeAss = character => character === '{' ? '(' : character === '}' ? ')' : character === '\\' ? '/' : character;
     const escapeYoutube = character => character === ' ' ? '\u00A0' : (character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;' : character);
-    const safeChars = isAss ? charset.map(escapeAss) : isYoutube ? charset.map(escapeYoutube) : charset.map(escapeText);
+    const escapeXmlChar = character => character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;' : character === '"' ? '&quot;' : character === "'" ? '&apos;' : character;
+    const safeChars = isAss ? charset.map(escapeAss) : isYtt ? charset.map(escapeXmlChar) : isYoutube ? charset.map(escapeYoutube) : charset.map(escapeText);
 
     // Precompute adjustment LUT for brightness, contrast, and gamma
     const doAdjust = Boolean(cfg.brightness || cfg.contrast || cfg.gamma || cfg.saturation);
@@ -1043,6 +1064,33 @@ export class AsciliSrtExporter {
       sample.ctx.drawImage(videoEl, 0, 0, cols, rows);
       const pixels = sample.ctx.getImageData(0, 0, cols, rows).data;
       const lines = new Array(rows);
+
+      if (isYtt) {
+        // Native YouTube Timed Text path: 80/100 cols, hard &#10; breaks, crash-proof XML
+        for (let row = 0; row < rows; row++) {
+          let lineStr = '';
+          const rowOffset = row * cols * 4;
+          for (let col = 0; col < cols; col++) {
+            const index = rowOffset + col * 4;
+            let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
+            if (doAdjust) {
+              red = adjustLut[red]; green = adjustLut[green]; blue = adjustLut[blue];
+              if (saturation !== 1) {
+                const gray = 0.299 * red + 0.587 * green + 0.114 * blue;
+                red = gray + saturation * (red - gray);
+                green = gray + saturation * (green - gray);
+                blue = gray + saturation * (blue - gray);
+              }
+            }
+            const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
+            let charIndex = Math.round(luminance * lastChar);
+            if (invert) charIndex = lastChar - charIndex;
+            lineStr += safeChars[charIndex] || ' ';
+          }
+          lines[row] = lineStr;
+        }
+        return lines.join('&#10;');
+      }
 
       if (isYoutube) {
         // Safe YouTube WebVTT path: plain text, non-breaking spaces, zero HTML tags, fits YouTube caption box
@@ -1194,9 +1242,13 @@ export class AsciliSrtExporter {
 
     const queueCue = (text, start, end) => {
       const safeEnd = Math.max(end, start + 0.05);
-      const safeText = text.trim().length === 0 ? '\u00A0' : text;
+      const safeText = text.trim().length === 0 ? ' ' : text;
       let cue;
-      if (isAss) {
+      if (isYtt) {
+        const startMs = Math.round(start * 1000);
+        const durMs = Math.max(50, Math.round((safeEnd - start) * 1000));
+        cue = `  <p t="${startMs}" d="${durMs}" wp="1"><s p="1">${safeText}</s></p>\n`;
+      } else if (isAss) {
         cue = `Dialogue: 0,${timestampAss(start)},${timestampAss(safeEnd)},Default,,0,0,0,,${safeText}\n`;
       } else {
         cue = `${++cueNumber}\n${timestamp(start)} --> ${timestamp(safeEnd)}\n${safeText}\n\n`;
@@ -1227,11 +1279,15 @@ export class AsciliSrtExporter {
           queueCue(pendingText, pendingStart, duration);
           pendingText = null;
         }
+        if (isYtt) {
+          batch.push('</body>\n</timedtext>\n');
+          batchBytes += 25;
+        }
         flushBatch();
         await this._writeChain;
         if (this._outputError) throw this._outputError;
-        const resultMime = isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip';
-        const formatName = isYoutube ? 'youtube' : isAss ? 'ass' : isVtt ? 'vtt' : 'srt';
+        const resultMime = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : 'application/x-subrip';
+        const formatName = isYtt ? 'ytt' : isYoutube ? 'youtube' : isAss ? 'ass' : isVtt ? 'vtt' : 'srt';
         if (this._writable) {
           await this._writable.close();
           this._writable = null;
@@ -1396,7 +1452,7 @@ export class AsciliSrtExporter {
   }
 }
 
-export { AsciliSrtExporter as AsciliVttExporter, AsciliSrtExporter as AsciliAssExporter, AsciliSrtExporter as AsciliYoutubeExporter, AsciliSrtExporter as AsciliSubtitleExporter };
+export { AsciliSrtExporter as AsciliVttExporter, AsciliSrtExporter as AsciliAssExporter, AsciliSrtExporter as AsciliYttExporter, AsciliSrtExporter as AsciliYoutubeExporter, AsciliSrtExporter as AsciliSubtitleExporter };
 
 // ─── AsciliLiveRecorder ─────────────────────────────────────────────────────
 // Records the live ASCII output from any source (webcam, screen, file).
