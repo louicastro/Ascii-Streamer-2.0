@@ -1339,7 +1339,11 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
     ? (cfg.colorMode === 'monochrome' || isYoutube || isYtt ? 0 : cells * 15)
     : (cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28);
   const cueBytes = cells * bytesPerChar + colorMarkup + (isAss || isYtt ? 50 : 48);
-  return cueBytes * Math.ceil(duration * fps);
+  const totalRaw = cueBytes * Math.ceil(duration * fps);
+  if (isYtt) {
+    return Math.min(20 * 1024 * 1024, totalRaw);
+  }
+  return totalRaw;
 }
 
 function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 15, format = 'srt') {
@@ -1372,11 +1376,11 @@ function updateExportModeUI() {
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
   cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || ((isYoutube || isYtt) ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
   if (cvSrtNote) {
     const speedMult = selectedFps <= 15 ? 3.0 : selectedFps <= 30 ? 2.5 : 2.0;
     cvSrtNote.textContent = isYtt
-      ? `YouTube Timed Text (.ytt) uses native YouTube XML supporting full 80/100 cols, monospace font, and 14-min videos without crashing.`
+      ? `YouTube Timed Text (.ytt) uses native YouTube XML supporting full 80/100 cols, monospace font, 24 FPS animation, and strict 20 MB size ceiling.`
       : isYoutube
       ? `YouTube Captions (.vtt) produces crash-proof 30-col × 4-row plain text at 2 FPS optimized for YouTube Studio limits.`
       : isAss
@@ -1390,7 +1394,7 @@ function updateExportModeUI() {
     ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
     : (isYtt ? 80 : isYoutube ? 30 : isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40));
   cvCfgCols.textContent = isSubtitle
-    ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
+    ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · max 20MB · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
     : `${cfg.cols} cols`;
   cvCfgFmt.textContent = isYtt
     ? 'YouTube Timed Text (.ytt) XML'
@@ -1404,7 +1408,7 @@ function updateExportModeUI() {
     ? 'SRT (.srt) text'
     : (detectMime().includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)');
   const saveLabel = $('cvSaveLabel');
-  if (saveLabel) saveLabel.textContent = isYtt ? 'Download .ytt' : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : 'Download Video';
+  if (saveLabel) saveLabel.textContent = isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : 'Download Video';
 }
 
 function updateLongVideoWarning() {
@@ -1417,7 +1421,7 @@ function updateLongVideoWarning() {
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
   const isYoutube = exportType === 'youtube';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || ((isYoutube || isYtt) ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
   const fps = selectedFps;
   const cols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
@@ -1592,7 +1596,9 @@ function cvRefreshSettings() {
 
 cvExportType.addEventListener('change', () => {
   const isSubtitle = cvExportType.value === 'srt' || cvExportType.value === 'vtt' || cvExportType.value === 'ass' || cvExportType.value === 'youtube' || cvExportType.value === 'ytt';
-  if (cvExportType.value === 'youtube' || cvExportType.value === 'ytt') {
+  if (cvExportType.value === 'ytt') {
+    cvCfgFpsOverride.value = '24';
+  } else if (cvExportType.value === 'youtube') {
     cvCfgFpsOverride.value = '2';
   } else if (isSubtitle && (cvCfgFpsOverride.value === '60' || cvCfgFpsOverride.value === '2')) {
     cvCfgFpsOverride.value = '24';
@@ -1775,12 +1781,12 @@ cvStart.addEventListener('click', async () => {
   const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || ((isYoutube || isYtt) ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
   const resolution = cvCfgRes.value || '1440p';
   const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
     ? cvSourceVideo.duration
     : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
-  const targetFps = (isYoutube || isYtt) ? Math.min(5, selectedFps) : selectedFps;
+  const targetFps = isYoutube ? Math.min(5, selectedFps) : selectedFps;
   const exportCols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : cfg.cols;

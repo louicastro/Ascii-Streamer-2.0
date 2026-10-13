@@ -850,9 +850,9 @@ export class AsciliSrtExporter {
       return;
     }
 
-    // Guard against YouTube crashes on long videos (14min = 840s) by capping total cues under ~1800
-    const rawFps = parseFloat(targetFps) || (isYtt || isYoutube ? 2 : 15);
-    const maxSafeFps = (isYtt || isYoutube) && duration > 240
+    // Guard against YouTube crashes on long videos (14min = 840s) by capping total cues under ~1800 for plain VTT
+    const rawFps = parseFloat(targetFps) || (isYtt ? 24 : isYoutube ? 2 : 15);
+    const maxSafeFps = (!isYtt && isYoutube && duration > 240)
       ? Math.min(rawFps, Math.max(1, Math.floor(1800 / duration)))
       : rawFps;
     const targetFpsVal = Math.min(60, Math.max(1, maxSafeFps));
@@ -866,6 +866,8 @@ export class AsciliSrtExporter {
     const sample = getOffscreen(cols, rows);
     this.canvas = sample.canvas;
     const parts = [];
+    const YTT_MAX_BYTES = 20 * 1024 * 1024; // Strict 20 MB ceiling for YouTube upload
+    let currentYttBytes = 0;
     let bufferedBytes = 0;
     let outputBytes = 0;
     let batch = [];
@@ -997,6 +999,7 @@ export class AsciliSrtExporter {
       ].join('\n');
       batch.push(yttHeader);
       batchBytes += yttHeader.length * 2;
+      currentYttBytes += yttHeader.length;
     } else if (isAss) {
       const playResX = videoWidth || 1920;
       const playResY = videoHeight || 1080;
@@ -1241,13 +1244,18 @@ export class AsciliSrtExporter {
     };
 
     const queueCue = (text, start, end) => {
-      const safeEnd = Math.max(end, start + 0.05);
+      const safeEnd = Math.max(end, start + 0.04);
       const safeText = text.trim().length === 0 ? ' ' : text;
       let cue;
       if (isYtt) {
         const startMs = Math.round(start * 1000);
-        const durMs = Math.max(50, Math.round((safeEnd - start) * 1000));
+        const durMs = Math.max(40, Math.round((safeEnd - start) * 1000));
         cue = `  <p t="${startMs}" d="${durMs}" wp="1"><s p="1">${safeText}</s></p>\n`;
+        // Strictly prevent exceeding 20 MB ceiling (reserve 4096 bytes for closing tags)
+        if (currentYttBytes + cue.length + 4096 >= YTT_MAX_BYTES) {
+          return;
+        }
+        currentYttBytes += cue.length;
       } else if (isAss) {
         cue = `Dialogue: 0,${timestampAss(start)},${timestampAss(safeEnd)},Default,,0,0,0,,${safeText}\n`;
       } else {
@@ -1280,8 +1288,10 @@ export class AsciliSrtExporter {
           pendingText = null;
         }
         if (isYtt) {
-          batch.push('</body>\n</timedtext>\n');
-          batchBytes += 25;
+          const yttFooter = '</body>\n</timedtext>\n';
+          batch.push(yttFooter);
+          batchBytes += yttFooter.length * 2;
+          currentYttBytes += yttFooter.length;
         }
         flushBatch();
         await this._writeChain;
@@ -1303,6 +1313,21 @@ export class AsciliSrtExporter {
         this._chunks = [];
         onError?.(error.message);
       }
+    };
+
+    const getDiffRatio = (a, b) => {
+      if (a === b) return 0;
+      if (!a || !b) return 1;
+      const len = Math.min(a.length, b.length);
+      if (len === 0) return 1;
+      let diff = Math.abs(a.length - b.length);
+      const step = len > 2000 ? 2 : 1;
+      let checked = 0;
+      for (let i = 0; i < len; i += step) {
+        if (a.charCodeAt(i) !== b.charCodeAt(i)) diff++;
+        checked++;
+      }
+      return diff / (checked + Math.abs(a.length - b.length));
     };
 
     const processTick = () => {
@@ -1329,9 +1354,24 @@ export class AsciliSrtExporter {
           pendingText = text;
           pendingStart = Math.max(0, sourceTime);
         } else if (text !== pendingText) {
-          queueCue(pendingText, pendingStart, sourceTime);
-          pendingText = text;
-          pendingStart = sourceTime;
+          let shouldMerge = false;
+          if (isYtt && duration > 0) {
+            // Adaptive 24 FPS budget control for 20 MB ceiling
+            const projectedBudget = (sourceTime / duration) * (YTT_MAX_BYTES - 131072);
+            if (currentYttBytes > projectedBudget * 0.8) {
+              const diffRatio = getDiffRatio(text, pendingText);
+              // Threshold scales smoothly if pacing ahead of budget
+              const diffThreshold = currentYttBytes > projectedBudget * 1.15 ? 0.08 : 0.035;
+              if (diffRatio < diffThreshold) {
+                shouldMerge = true;
+              }
+            }
+          }
+          if (!shouldMerge) {
+            queueCue(pendingText, pendingStart, sourceTime);
+            pendingText = text;
+            pendingStart = sourceTime;
+          }
         }
         lastSampleTime = sourceTime;
       }
