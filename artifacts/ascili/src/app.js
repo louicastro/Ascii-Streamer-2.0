@@ -1434,7 +1434,7 @@ function updateLongVideoWarning() {
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
   cvWarning.style.display = 'flex';
   const summary = `${fmtTime(duration)} at ${fps} FPS is about ${Math.ceil(duration * fps).toLocaleString()} frames; estimated output about ${fmtBytes(size)}.`;
-  const speedMult = fps <= 15 ? 3.0 : fps <= 30 ? 2.5 : 2.0;
+  const speedMult = fps <= 15 ? 2.0 : fps <= 30 ? 1.5 : 1.0;
   const estRenderTime = fmtTime(duration / speedMult);
   const speedNote = isSubtitle ? ` ${speedMult.toFixed(1)}× accelerated conversion active (finishes in ~${estRenderTime}).` : '';
   cvWarningText.textContent = `${summary}${speedNote} Keep tab open during conversion.`;
@@ -1571,10 +1571,11 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
   };
 }
 
-function drawConverterPreview(videoEl) {
+function drawConverterPreview(videoEl, overrideCfg = null) {
   if (!videoEl?.videoWidth || !cvPreviewCanvas) return;
-  const previewCols = Math.min(cfg.cols || 80, 240);
-  const previewCfg = { ...cfg, cols: previewCols, fontSize: 4 };
+  const baseCfg = overrideCfg || cfg;
+  const previewCols = Math.min(baseCfg.cols || 80, 240);
+  const previewCfg = { ...baseCfg, cols: previewCols, fontSize: 4 };
   renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: 4 });
 }
 
@@ -1633,13 +1634,14 @@ function cvSetFile(file) {
   cvSourceVideo.preload = 'auto';
   cvSourceVideo.playsInline = true;
   cvSourceVideo.style.position = 'fixed';
-  cvSourceVideo.style.left     = '0px';
-  cvSourceVideo.style.top      = '0px';
-  cvSourceVideo.style.width    = '160px';
-  cvSourceVideo.style.height   = '90px';
-  cvSourceVideo.style.opacity  = '0.001';
+  cvSourceVideo.style.bottom   = '0px';
+  cvSourceVideo.style.right    = '0px';
+  cvSourceVideo.style.width    = '4px';
+  cvSourceVideo.style.height   = '4px';
+  cvSourceVideo.style.opacity  = '0.99';
   cvSourceVideo.style.pointerEvents = 'none';
-  cvSourceVideo.style.zIndex   = '-999';
+  cvSourceVideo.style.zIndex   = '9999';
+  cvSourceVideo.style.visibility = 'visible';
   cvSourceVideo.src     = URL.createObjectURL(file);
   document.body.appendChild(cvSourceVideo);
 
@@ -1843,12 +1845,15 @@ cvStart.addEventListener('click', async () => {
   cvConvertAnother.style.display  = 'none';
   cvBlob = null;
   cvStartProgressClock();
+  if (cvPreviewCanvas && cvSourceVideo) {
+    drawConverterPreview(cvSourceVideo, exportCfg);
+  }
 
   if (isSubtitle) {
     const labelPrefix = isYtt ? 'YOUTUBE YTT' : isYoutube ? 'YOUTUBE VTT' : isAss ? 'ASS' : isVtt ? 'WEBVTT' : 'SRT';
     cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT PROGRESS`;
     try {
-    const subtitleSpeed = targetFps <= 15 ? 3.0 : targetFps <= 30 ? 2.5 : 2.0;
+    const subtitleSpeed = targetFps <= 15 ? 2.0 : targetFps <= 30 ? 1.5 : 1.0;
     cvSrtExporter.start(cvSourceVideo, { ...exportCfg, monoColor: state.monoColor }, {
       targetFps,
       format: isYtt ? 'ytt' : isYoutube ? 'youtube' : isAss ? 'ass' : isVtt ? 'vtt' : 'srt',
@@ -1863,10 +1868,7 @@ cvStart.addEventListener('click', async () => {
         cvUpdateProgressClock();
 
         if (cvPreviewCanvas && cvSourceVideo) {
-          const pCtx = cvPreviewCanvas.getContext('2d');
-          if (pCtx) {
-            pCtx.drawImage(cvSourceVideo, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
-          }
+          drawConverterPreview(cvSourceVideo, exportCfg);
         }
       },
       async onComplete(blob, resultMime, result) {
@@ -1991,6 +1993,7 @@ cvStop.addEventListener('click', () => {
   cvStopProgressClock();
   cvStop.style.display  = 'none';
   cvStart.style.display = '';
+  cvStart.disabled      = false;
   cvProgressEta.textContent = 'Stopped';
   showToast('Conversion stopped');
 });

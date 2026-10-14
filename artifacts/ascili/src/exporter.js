@@ -856,7 +856,7 @@ export class AsciliSrtExporter {
       ? Math.min(rawFps, Math.max(1, Math.floor(1800 / duration)))
       : rawFps;
     const targetFpsVal = Math.min(60, Math.max(1, maxSafeFps));
-    const effectiveSpeed = Math.min(4.0, Math.max(1.0, parseFloat(speed) || (targetFpsVal <= 5 ? 3.0 : targetFpsVal <= 15 ? 3.0 : targetFpsVal <= 30 ? 2.5 : 2.0)));
+    const effectiveSpeed = Math.min(2.0, Math.max(1.0, parseFloat(speed) || (targetFpsVal <= 15 ? 2.0 : targetFpsVal <= 30 ? 1.5 : 1.0)));
     const sampleInterval = 1 / targetFpsVal;
     const charset = Array.from(cfg.charSet || CHAR_SETS.standard);
     const lastChar = charset.length - 1;
@@ -913,7 +913,7 @@ export class AsciliSrtExporter {
           }
         }
       } else {
-        // ansi256, truecolor
+        // ansi256, truecolor: instant direct LUT calculation in ~2 ms
         yttPalette = ANSI256;
         yttPenLut = new Uint16Array(32 * 32 * 32);
         for (let r = 0; r < 32; r++) {
@@ -922,14 +922,18 @@ export class AsciliSrtExporter {
             const vg = (g * 255 / 31) | 0;
             for (let b = 0; b < 32; b++) {
               const vb = (b * 255 / 31) | 0;
-              let best = 0, bestD = 9999999;
-              for (let i = 0; i < 256; i++) {
-                const pal = ANSI256[i];
-                const dr = vr - pal[0], dg = vg - pal[1], db = vb - pal[2];
-                const d = dr * dr + dg * dg + db * db;
-                if (d < bestD) { bestD = d; best = i; if (d === 0) break; }
+              let idx;
+              if (Math.abs(vr - vg) <= 6 && Math.abs(vg - vb) <= 6) {
+                if (vr < 8) idx = 16;
+                else if (vr > 248) idx = 231;
+                else idx = 232 + Math.round(((vr - 8) / 239) * 23);
+              } else {
+                const r6 = Math.min(5, Math.max(0, Math.round((vr / 255) * 5)));
+                const g6 = Math.min(5, Math.max(0, Math.round((vg / 255) * 5)));
+                const b6 = Math.min(5, Math.max(0, Math.round((vb / 255) * 5)));
+                idx = 16 + (36 * r6) + (6 * g6) + b6;
               }
-              yttPenLut[(r << 10) | (g << 5) | b] = best + 1;
+              yttPenLut[(r << 10) | (g << 5) | b] = (idx & 255) + 1;
             }
           }
         }
@@ -1181,6 +1185,7 @@ export class AsciliSrtExporter {
         const runs = [];
         let runPenId = -1;
         let runText = '';
+        let spanR = -999, spanG = -999, spanB = -999;
 
         for (let row = 0; row < rows; row++) {
           if (row > 0) {
@@ -1202,13 +1207,22 @@ export class AsciliSrtExporter {
             const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
             let charIndex = Math.round(luminance * lastChar);
             if (invert) charIndex = lastChar - charIndex;
-            const penId = yttPenLut ? (yttPenLut[((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)] || 1) : 1;
 
-            if (runPenId !== -1 && penId !== runPenId) {
-              runs.push(`<s p="${runPenId}">${runText}</s>`);
-              runText = '';
+            const rawPenId = yttPenLut ? (yttPenLut[((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)] || 1) : 1;
+
+            if (runPenId === -1) {
+              runPenId = rawPenId;
+              spanR = red; spanG = green; spanB = blue;
+            } else if (rawPenId !== runPenId) {
+              const dr = red - spanR, dg = green - spanG, db = blue - spanB;
+              // Visual micro-noise tolerance: keep span if distance from anchor is negligible (< 20 in RGB)
+              if (dr * dr + dg * dg + db * db >= 400) {
+                runs.push(`<s p="${runPenId}">${runText}</s>`);
+                runText = '';
+                runPenId = rawPenId;
+                spanR = red; spanG = green; spanB = blue;
+              }
             }
-            runPenId = penId;
             runText += safeChars[charIndex] || ' ';
           }
         }
@@ -1460,13 +1474,20 @@ export class AsciliSrtExporter {
       if (sourceTime > lastSourceTime + 0.0001) {
         lastSourceTime = sourceTime;
         lastSourceAdvanceAt = performance.now();
-      } else if (performance.now() - lastSourceAdvanceAt > 15000 && sourceTime < duration) {
-        if (videoEl.paused && this._running) videoEl.play().catch(() => {});
-        else if (performance.now() - lastSourceAdvanceAt > 20000) {
-          this._running = false;
-          finish();
-          onError?.('Timed out while decoding the source video. Try a browser-supported video format.');
-          return;
+      } else if (sourceTime < duration) {
+        const stallMs = performance.now() - lastSourceAdvanceAt;
+        if (stallMs > 2000 && videoEl.playbackRate > 1.0) {
+          // Relieve hardware decoder backpressure
+          try { videoEl.playbackRate = 1.0; } catch {}
+        }
+        if (stallMs > 15000) {
+          if (videoEl.paused && this._running) videoEl.play().catch(() => {});
+          else if (stallMs > 20000) {
+            this._running = false;
+            finish();
+            onError?.('Timed out while decoding the source video. Try a browser-supported video format.');
+            return;
+          }
         }
       }
 
