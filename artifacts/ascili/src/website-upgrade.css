@@ -156,3 +156,74 @@ body {
     padding: 7px 10px;
   }
 }
+
+/* Color picker input */
+.color-picker-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px dashed var(--border-bright);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--fg-dim);
+  background: rgba(0, 0, 0, 0.4);
+  transition: all 0.2s ease;
+}
+.color-picker-label:hover {
+  border-color: var(--green);
+  color: var(--green);
+  transform: scale(1.1);
+}
+.color-picker-input {
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  width: 40px;
+  height: 40px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Custom text and checkbox controls in settings */
+.setting-text {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.setting-text:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 8px rgba(57, 255, 82, 0.2);
+}
+
+.setting-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--green);
+  cursor: pointer;
+}
+
+.icon-btn.active {
+  background: rgba(57, 255, 82, 0.2);
+  border-color: var(--green);
+  color: var(--green);
+  box-shadow: 0 0 10px rgba(57, 255, 82, 0.3);
+}
+
+.icon-btn.copied {
+  background: rgba(0, 245, 255, 0.25) !important;
+  border-color: var(--cyan) !important;
+  color: var(--cyan) !important;
+}

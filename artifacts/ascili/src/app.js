@@ -1,5 +1,6 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, renderFrameToCanvas, computeFontForResolution } from './exporter.js';
+import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution } from './exporter.js';
+import { AsciliGifEncoder } from './gif-encoder.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,8 @@ const btnPause      = $('btnPause');
 const iconPause     = $('iconPause');
 const iconPlay      = $('iconPlay');
 const btnFullscreen = $('btnFullscreen');
+const btnCopyAscii  = $('btnCopyAscii');
+const btnMirror     = $('btnMirror');
 const btnSettings   = $('btnSettings');
 const btnScanlines  = $('btnScanlines');
 const btnResetSettings = $('btnResetSettings');
@@ -67,9 +70,10 @@ const vtTime     = $('vtTime');
 const vtDuration = $('vtDuration');
 const vtSpeed    = $('vtSpeed');
 
-// Color swatches
+// Color swatches & custom color picker
 const colorSwatchRow = $('colorSwatchRow');
 const colorSwatches  = document.querySelectorAll('.color-swatch');
+const inputCustomColor = $('inputCustomColor');
 
 // Scanlines toggle in settings
 const checkScanlines = $('checkScanlines');
@@ -80,6 +84,9 @@ const dlMenu        = $('dlMenu');
 const dlTxt         = $('dlTxt');
 const dlHtml        = $('dlHtml');
 const dlPng         = $('dlPng');
+const dlCopyFrame   = $('dlCopyFrame');
+const dlRecordGif   = $('dlRecordGif');
+const dlGifLabel    = $('dlGifLabel');
 const dlRecordVideo = $('dlRecordVideo');
 const dlRecordLabel = $('dlRecordLabel');
 const dlVideo       = $('dlVideo');
@@ -88,6 +95,12 @@ const dlVideo       = $('dlVideo');
 const selectColorMode   = $('selectColorMode');
 const selectCharSet     = $('selectCharSet');
 const customCharRow     = $('customCharRow');
+const rowCustomCharset  = $('rowCustomCharset');
+const inputCustomCharset = $('inputCustomCharset');
+const valCustomChars    = $('valCustomChars');
+const selectDithering   = $('selectDithering');
+const selectAspectRatio = $('selectAspectRatio');
+const chkMirror         = $('chkMirror');
 const inputCustomChars  = $('inputCustomChars');
 const checkInvert       = $('checkInvert');
 const rangeCols         = $('rangeCols') || $('inputCols');
@@ -156,6 +169,9 @@ const cfg = {
   contrast:    0,
   gamma:       0,
   saturation:  0,
+  dithering:   'none',
+  aspectRatio: 'auto',
+  mirror:      false,
   // AI Vision parameters
   enableEdgeDetection: true,
   edgeThreshold:       0.16,
@@ -250,6 +266,14 @@ function readConfig() {
   cfg.cols        = Math.min(1000, Math.max(20, parseInt(rangeCols?.value, 10) || cfg.cols));
   cfg.fontSize    = Math.min(30, Math.max(1, parseInt(rangeFontSize?.value, 10) || cfg.fontSize));
   cfg.fps         = Math.min(120, Math.max(1, parseFloat(selectFps?.value) || 60));
+  cfg.dithering   = selectDithering?.value || 'none';
+  cfg.aspectRatio = selectAspectRatio?.value || 'auto';
+  cfg.mirror      = chkMirror?.checked ?? false;
+
+  if (btnMirror) {
+    btnMirror.classList.toggle('active', cfg.mirror);
+  }
+
   if (rangeBrightness) {
     const value = parseInt(rangeBrightness.value, 10);
     cfg.brightness = legacyCenteredSliders ? value - 100 : value;
@@ -275,11 +299,15 @@ function readConfig() {
 
   const cs = selectCharSet?.value || 'standard';
   if (cs === 'custom') {
-    cfg.charSet = inputCustomChars?.value || CHAR_SETS.standard;
+    const customText = inputCustomCharset?.value || inputCustomChars?.value || ' .:-=+*#%@';
+    CHAR_SETS.custom = customText;
+    cfg.charSet = customText;
+    if (valCustomChars) valCustomChars.textContent = `${customText.length} chars`;
   } else {
     cfg.charSet = CHAR_SETS[cs] || CHAR_SETS.standard;
   }
 
+  if (rowCustomCharset) rowCustomCharset.style.display = cs === 'custom' ? 'block' : 'none';
   if (customCharRow) customCharRow.style.display = cs === 'custom' ? 'block' : 'none';
 
   // Show/hide color swatches based on monochrome mode
@@ -330,6 +358,12 @@ function applyPreset(name) {
   if (rangeSaturation) rangeSaturation.value = p.saturation;
   if (valSaturation) valSaturation.textContent = p.saturation;
 
+  if (selectDithering) selectDithering.value = 'none';
+  if (selectAspectRatio) selectAspectRatio.value = 'auto';
+  if (chkMirror) chkMirror.checked = false;
+  if (btnMirror) btnMirror.classList.remove('active');
+  if (rowCustomCharset) rowCustomCharset.style.display = 'none';
+
   // AI Vision Preset values
   if (checkAiEdge) checkAiEdge.checked = p.enableEdgeDetection ?? true;
   if (rangeEdgeThreshold) {
@@ -351,11 +385,52 @@ colorSwatches.forEach(swatch => {
     state.monoColor = swatch.dataset.color;
     colorSwatches.forEach(s => s.classList.remove('active'));
     swatch.classList.add('active');
+    if (inputCustomColor) inputCustomColor.value = state.monoColor;
     // Update CSS variable for engine use
     document.documentElement.style.setProperty('--green', state.monoColor);
     readConfig();
     showToast('Color: ' + swatch.title);
   });
+});
+
+if (inputCustomColor) {
+  inputCustomColor.addEventListener('input', e => {
+    state.monoColor = e.target.value;
+    colorSwatches.forEach(s => s.classList.remove('active'));
+    document.documentElement.style.setProperty('--green', state.monoColor);
+    readConfig();
+  });
+}
+
+// ─── Settings Controls Listeners ─────────────────────────────────────────────
+
+selectColorMode?.addEventListener('change', () => readConfig());
+selectCharSet?.addEventListener('change', () => readConfig());
+inputCustomCharset?.addEventListener('input', () => {
+  if (selectCharSet?.value === 'custom') {
+    readConfig();
+  }
+});
+selectDithering?.addEventListener('change', () => {
+  readConfig();
+  showToast('Dithering: ' + (selectDithering.selectedOptions[0]?.text || selectDithering.value));
+});
+selectAspectRatio?.addEventListener('change', () => {
+  readConfig();
+  showToast('Aspect Ratio: ' + (selectAspectRatio.selectedOptions[0]?.text || selectAspectRatio.value));
+});
+chkMirror?.addEventListener('change', () => {
+  readConfig();
+  showToast(cfg.mirror ? 'Mirror feed: ON' : 'Mirror feed: OFF');
+});
+btnMirror?.addEventListener('click', () => {
+  if (chkMirror) {
+    chkMirror.checked = !chkMirror.checked;
+  } else {
+    cfg.mirror = !cfg.mirror;
+  }
+  readConfig();
+  showToast(cfg.mirror ? 'Mirror feed: ON' : 'Mirror feed: OFF');
 });
 
 // ─── Scanlines Toggle ────────────────────────────────────────────────────────
@@ -686,6 +761,12 @@ function renderLoop(ts) {
   // If live recording is active, capture this frame
   if (liveRecorder.running) {
     liveRecorder.captureFrame(sourceVideo, cfg);
+  }
+  if (liveGifRecorder.running) {
+    const finishedGifBlob = liveGifRecorder.captureFrame(asciiCanvas);
+    if (finishedGifBlob) {
+      finishGifRecording(finishedGifBlob);
+    }
   }
 
   state.lastFrameTs = ts;
@@ -1074,19 +1155,26 @@ function fmtBytes(b) {
   return (b/(1024*1024)).toFixed(1) + ' MB';
 }
 
-btnCopy?.addEventListener('click', async () => {
+async function copyAsciiFrameToClipboard() {
   if (!state.running && !engine._lastCols) { showToast('Start a video source first'); return; }
   showToast('Preparing ASCII copy...');
   try {
     const text = await engine.exportPlainTextAsync();
-    if (!text.trim()) { showToast('Nothing to copy'); return; }
+    if (!text || !text.trim()) { showToast('Nothing to copy'); return; }
     await navigator.clipboard.writeText(text);
     const count = (engine._lastCols * engine._lastRows).toLocaleString();
     showToast(`Copied ${count} characters!`);
-  } catch {
-    showToast('Copy failed');
+    if (btnCopyAscii) {
+      btnCopyAscii.classList.add('copied');
+      setTimeout(() => btnCopyAscii.classList.remove('copied'), 1500);
+    }
+  } catch (err) {
+    showToast('Copy failed: ' + (err?.message || 'Clipboard access denied'));
   }
-});
+}
+
+btnCopy?.addEventListener('click', copyAsciiFrameToClipboard);
+btnCopyAscii?.addEventListener('click', copyAsciiFrameToClipboard);
 
 btnDownloadTxt?.addEventListener('click', async () => {
   if (!state.running && !engine._lastCols) { showToast('Start a video source first'); return; }
@@ -1143,6 +1231,50 @@ function download(filename, content, type) {
     // Give browsers enough time to start reading larger generated files.
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
   }
+}
+
+// ─── Live GIF Recording ──────────────────────────────────────────────────────
+
+const liveGifRecorder = new AsciliGifRecorder();
+
+function toggleGifRecording() {
+  if (!state.running) {
+    showToast('Start a video source first');
+    return;
+  }
+  if (liveGifRecorder.running) {
+    showToast('Finishing GIF encoding...');
+    const blob = liveGifRecorder.stop();
+    finishGifRecording(blob);
+    return;
+  }
+
+  const targetW = Math.min(480, Math.max(160, asciiCanvas.width || 480));
+  const targetH = Math.min(480, Math.max(120, Math.round(targetW * ((asciiCanvas.height || 360) / (asciiCanvas.width || 480)))));
+
+  liveGifRecorder.startRecording(targetW, targetH, {
+    delayMs: 100, // 10 fps
+    maxFrames: 40,
+    onProgress(pct, frames, total) {
+      if (dlGifLabel) dlGifLabel.textContent = `Recording GIF (${Math.round(pct * 100)}%)`;
+    },
+  });
+
+  if (dlRecordGif) dlRecordGif.classList.add('recording');
+  if (dlGifLabel) dlGifLabel.textContent = 'Recording GIF (0%)';
+  showToast('Recording 4s animated GIF...');
+}
+
+function finishGifRecording(blob) {
+  if (dlRecordGif) dlRecordGif.classList.remove('recording');
+  if (dlGifLabel) dlGifLabel.textContent = 'Record Animated GIF';
+  if (!blob) {
+    showToast('GIF recording cancelled or empty');
+    return;
+  }
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  download(`ascili-${ts}.gif`, blob, 'image/gif');
+  showToast(`GIF saved — ${fmtBytes(blob.size)}`);
 }
 
 // ─── Topbar Download Dropdown ─────────────────────────────────────────────────
@@ -1211,6 +1343,16 @@ document.addEventListener('click', () => {
 dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+dlCopyFrame?.addEventListener('click', () => {
+  dlMenu.classList.remove('open');
+  btnDownload.classList.remove('open');
+  copyAsciiFrameToClipboard();
+});
+dlRecordGif?.addEventListener('click', () => {
+  dlMenu.classList.remove('open');
+  btnDownload.classList.remove('open');
+  toggleGifRecording();
+});
 if (dlRecordVideo) {
   dlRecordVideo.addEventListener('click', () => {
     dlMenu.classList.remove('open');
@@ -1258,6 +1400,7 @@ const cvDropZone       = $('cvDropZone');
 
 const cvExporter = new AsciliVideoExporter();
 const cvSrtExporter = new AsciliSrtExporter();
+const cvGifExporter = new AsciliGifVideoExporter();
 const SRT_MAX_COLS = 40;
 const SRT_DEFAULT_FPS = 15;
 const SRT_SIZE_BUDGET = 950 * 1024 * 1024;
@@ -1369,6 +1512,7 @@ function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 1
 
 function updateExportModeUI() {
   const exportType = cvExportType.value;
+  const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
   const isYoutube = exportType === 'youtube';
@@ -1376,7 +1520,7 @@ function updateExportModeUI() {
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
   cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
   const colorLabel = cfg.colorMode === 'monochrome'
     ? 'monochrome'
     : (cfg.colorMode === 'grayscale' ? 'grayscale' : cfg.colorMode === 'ansi16' ? '16 colors' : cfg.colorMode === 'ansi256' ? '256 colors' : 'color');
@@ -1392,12 +1536,18 @@ function updateExportModeUI() {
       ? `WebVTT (.vtt) encodes ASCII frames as web-standard cues with ${speedMult.toFixed(1)}× accelerated playback.`
       : `SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with ${speedMult.toFixed(1)}× accelerated playback.`;
   }
-  cvCfgRes.closest('.cv-stat-row').style.display = isSubtitle ? 'none' : '';
-  const cols = cvSourceVideo
-    ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
-    : (isYtt ? 80 : isYoutube ? 30 : isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40));
+  cvCfgRes.closest('.cv-stat-row').style.display = (isSubtitle || isGif) ? 'none' : '';
+  const cols = isSubtitle
+    ? (cvSourceVideo
+      ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
+      : (isYtt ? 80 : isYoutube ? 30 : isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40)))
+    : isGif
+    ? Math.min(cfg.cols || 80, 100)
+    : cfg.cols;
   cvCfgCols.textContent = isSubtitle
     ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · ${colorLabel} · max 20MB · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
+    : isGif
+    ? `${cols} cols · ${selectedFps} FPS`
     : `${cfg.cols} cols`;
   cvCfgFmt.textContent = isYtt
     ? 'YouTube Timed Text (.ytt) XML'
@@ -1409,9 +1559,11 @@ function updateExportModeUI() {
     ? 'WebVTT (.vtt) text'
     : isSrt
     ? 'SRT (.srt) text'
+    : isGif
+    ? 'Animated GIF (.gif)'
     : (detectMime().includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)');
   const saveLabel = $('cvSaveLabel');
-  if (saveLabel) saveLabel.textContent = isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : 'Download Video';
+  if (saveLabel) saveLabel.textContent = isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : isGif ? 'Download Animated GIF' : 'Download Video';
 }
 
 function updateLongVideoWarning() {
@@ -1421,15 +1573,20 @@ function updateLongVideoWarning() {
   }
   const duration = cvSourceVideo.duration;
   const exportType = cvExportType.value;
+  const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
   const isYoutube = exportType === 'youtube';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
   const fps = selectedFps;
   const cols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
+    : isGif
+    ? Math.min(cfg.cols || 80, 100)
     : Math.min(1000, cfg.cols);
-  const size = isSubtitle
+  const size = isGif
+    ? Math.min(50 * 1024 * 1024, Math.round(duration * Math.min(20, fps) * 45000))
+    : isSubtitle
     ? estimateSrtBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
   cvWarning.style.display = 'flex';
@@ -1604,6 +1761,8 @@ cvExportType.addEventListener('change', () => {
     cvCfgFpsOverride.value = '24';
   } else if (cvExportType.value === 'youtube') {
     cvCfgFpsOverride.value = '2';
+  } else if (cvExportType.value === 'gif') {
+    cvCfgFpsOverride.value = '15';
   } else if (isSubtitle && (cvCfgFpsOverride.value === '60' || cvCfgFpsOverride.value === '2')) {
     cvCfgFpsOverride.value = '24';
   }
@@ -1780,13 +1939,14 @@ cvStart.addEventListener('click', async () => {
   updateLongVideoWarning();
 
   const exportType = cvExportType.value;
+  const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
   const isYoutube = exportType === 'youtube';
   const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
   const resolution = cvCfgRes.value || '1440p';
   const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
     ? cvSourceVideo.duration
@@ -1794,21 +1954,27 @@ cvStart.addEventListener('click', async () => {
   const targetFps = isYoutube ? Math.min(5, selectedFps) : selectedFps;
   const exportCols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
+    : isGif
+    ? Math.min(cfg.cols || 80, 100)
     : cfg.cols;
   const exportCfg = isSubtitle
     ? { ...cfg, cols: exportCols, fontSize: isAss ? 9 : (cfg.fontSize || 10) }
     : cfg;
   const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
-  const estimatedOutputBytes = isSubtitle
+  const estimatedOutputBytes = isGif
+    ? Math.min(50 * 1024 * 1024, Math.round(duration * Math.min(20, targetFps) * 45000))
+    : isSubtitle
     ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : estimateVideoBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, resolution);
   const memoryExportLimit = (isSubtitle ? 96 : 192) * 1024 * 1024;
-  const mimeType = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : detectMime();
-  const extension = isYtt ? 'ytt' : isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const mimeType = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : isGif ? 'image/gif' : detectMime();
+  const extension = isYtt ? 'ytt' : isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : isGif ? 'gif' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
   const filename = isYtt
     ? `youtube-timedtext-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.ytt`
     : isYoutube
     ? `youtube-ascii-captions-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.vtt`
+    : isGif
+    ? `ascili-animated-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.gif`
     : `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
   let writable = null;
   let temporaryExport = null;
@@ -1919,6 +2085,56 @@ cvStart.addEventListener('click', async () => {
     return;
   }
 
+  if (isGif) {
+    cvProgressSection.querySelector('.cv-section-label').textContent = 'GIF EXPORT PROGRESS';
+    try {
+      const gifFps = Math.min(20, Math.max(5, targetFps || 10));
+      cvGifExporter.start(cvSourceVideo, cfg, {
+        targetFps: gifFps,
+        maxFrames: Math.min(120, Math.ceil(duration * gifFps)),
+        onProgress(pct, frameNum, frameTotal) {
+          cvCurrentProgress = pct;
+          cvProgressFrames.textContent = `${frameNum} / ${frameTotal} frames`;
+          cvProgressFill.style.width = (pct * 100).toFixed(1) + '%';
+          cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
+          cvUpdateProgressClock();
+
+          if (cvPreviewCanvas && cvGifExporter._frameCanvas) {
+            const pCtx = cvPreviewCanvas.getContext('2d');
+            pCtx?.drawImage(cvGifExporter._frameCanvas, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
+          }
+        },
+        async onComplete(blob, resultMime, result) {
+          cvStopProgressClock();
+          cvBlob = blob;
+          cvMimeType = 'image/gif';
+          cvStop.style.display = 'none';
+          cvSave.style.display = '';
+          cvConvertAnother.style.display = '';
+          cvProgressFill.style.width = '100%';
+          cvProgressPct.textContent = '100%';
+          cvProgressEta.textContent = '';
+          cvProgressTime.textContent = 'Done';
+          cvProgressFrames.textContent = `${result?.frames || totalFrames} / ${result?.frames || totalFrames} frames`;
+          cvProgressSection.querySelector('.cv-section-label').textContent = 'GIF EXPORT COMPLETE';
+          cvDoneSection.style.display = 'flex';
+          cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  Animated GIF  ·  ${gifFps} FPS  ·  ${result?.cols || cfg.cols} cols`;
+          showToast('Animated GIF ready to download');
+        },
+        onError(message) {
+          cvStop.style.display = 'none';
+          cvStart.style.display = '';
+          cvStart.disabled = false;
+          cvProgressEta.textContent = 'Error';
+          cvShowExportError(message);
+        },
+      });
+    } catch (error) {
+      cvShowExportError(error?.message || error);
+    }
+    return;
+  }
+
   cvProgressSection.querySelector('.cv-section-label').textContent = 'ENCODING PROGRESS';
   try {
   cvExporter.start(cvSourceVideo, cfg, {
@@ -1989,7 +2205,9 @@ cvStart.addEventListener('click', async () => {
 });
 
 cvStop.addEventListener('click', () => {
-  cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
+  if (cvExporter._running) cvExporter.stop();
+  else if (cvSrtExporter._running) cvSrtExporter.stop();
+  else if (cvGifExporter._running) cvGifExporter.stop();
   cvStopProgressClock();
   cvStop.style.display  = 'none';
   cvStart.style.display = '';
@@ -2009,12 +2227,13 @@ cvSave.addEventListener('click', () => {
     return;
   }
   if (!cvBlob) return;
-  const ext = (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
+  const isGif = cvExportType?.value === 'gif' || cvMimeType.includes('gif');
+  const ext = (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : isGif ? 'gif' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
-  const filename = cvExportType?.value === 'ytt' ? `youtube-timedtext-${ts}.ytt` : cvExportType?.value === 'youtube' ? `youtube-ascii-captions-${ts}.vtt` : `ascili-${ts}.${ext}`;
+  const filename = cvExportType?.value === 'ytt' ? `youtube-timedtext-${ts}.ytt` : cvExportType?.value === 'youtube' ? `youtube-ascii-captions-${ts}.vtt` : isGif ? `ascili-animated-${ts}.gif` : `ascili-${ts}.${ext}`;
   try {
     download(filename, cvBlob, cvMimeType);
-    showToast(ext === 'ytt' ? 'YouTube Timed Text (.ytt) saved' : cvExportType?.value === 'youtube' ? 'YouTube captions saved' : ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
+    showToast(ext === 'ytt' ? 'YouTube Timed Text (.ytt) saved' : cvExportType?.value === 'youtube' ? 'YouTube captions saved' : isGif ? 'Animated GIF saved' : ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
   } catch (error) {
     cvShowExportError(error?.message || error);
   }
@@ -2039,9 +2258,11 @@ cvConvertAnother.addEventListener('click', () => {
 // Close on backdrop click
 cvOverlay.addEventListener('click', e => {
   if (e.target === cvOverlay) {
-    if (cvExporter._running || cvSrtExporter._running) {
+    if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running) {
       if (!confirm('Stop the current conversion?')) return;
-      cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
+      if (cvExporter._running) cvExporter.stop();
+      else if (cvSrtExporter._running) cvSrtExporter.stop();
+      else if (cvGifExporter._running) cvGifExporter.stop();
     }
     cvStopProgressClock();
     cvOverlay.classList.remove('open');
@@ -2058,9 +2279,11 @@ document.addEventListener('keydown', e => {
   // Escape closes the converter modal
   if (e.key === 'Escape') {
     if (cvOverlay.classList.contains('open')) {
-      if (cvExporter._running || cvSrtExporter._running) {
+      if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running) {
         if (!confirm('Stop the current conversion?')) return;
-        cvExporter._running ? cvExporter.stop() : cvSrtExporter.stop();
+        if (cvExporter._running) cvExporter.stop();
+        else if (cvSrtExporter._running) cvSrtExporter.stop();
+        else if (cvGifExporter._running) cvGifExporter.stop();
       }
       cvStopProgressClock();
       cvOverlay.classList.remove('open');
@@ -2080,7 +2303,12 @@ document.addEventListener('keydown', e => {
     case 's': case 'S':
       e.preventDefault(); toggleSettings(); break;
     case 'c': case 'C':
-      e.preventDefault(); btnCopy?.click(); break;
+      e.preventDefault(); copyAsciiFrameToClipboard(); break;
+    case 'm': case 'M':
+      e.preventDefault();
+      if (btnMirror) btnMirror.click();
+      else if (chkMirror) { chkMirror.checked = !chkMirror.checked; readConfig(); }
+      break;
     case 'r': case 'R':
       e.preventDefault(); applyPreset('classic'); showToast('Settings reset'); break;
     case 'v': case 'V':
@@ -2102,3 +2330,17 @@ document.addEventListener('keydown', e => {
 
 applyPreset('classic');
 readConfig();
+
+// ─── PWA Service Worker Registration ──────────────────────────────────────────
+
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        console.log('[ASCILI] Service worker active, scope:', reg.scope);
+      })
+      .catch(err => {
+        console.warn('[ASCILI] Service worker registration failed:', err);
+      });
+  });
+}

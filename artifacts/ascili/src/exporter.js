@@ -2,7 +2,8 @@
 // Renders one video frame as ASCII art directly onto an HTMLCanvasElement.
 // Used by AsciliVideoExporter to produce the recording canvas frames.
 
-import { AsciliEngine, CHAR_SETS, getAnsiColorLut, clamp, adjustPixel, ANSI16, ANSI256 } from './engine.js';
+import { AsciliEngine, CHAR_SETS, getAnsiColorLut, clamp, adjustPixel, ANSI16, ANSI256, computeCropBox, applyDithering } from './engine.js';
+import { AsciliGifEncoder } from './gif-encoder.js';
 
 // Reuse a single offscreen canvas across calls to avoid GC pressure
 let _offscreen = null;
@@ -77,7 +78,8 @@ export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides) {
 
   const vw  = videoEl.videoWidth  || videoEl.width || 640;
   const vh  = videoEl.videoHeight || videoEl.height || 480;
-  const rows = Math.max(1, Math.round(cols * (vh/vw) * 0.45));
+  const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+  const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
 
   const charW  = fontSize * CHAR_W_FACTOR;
   const charH  = fontSize;
@@ -92,7 +94,13 @@ export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides) {
 
   // Sample video into offscreen pixel grid
   const { canvas: off, ctx: octx } = getOffscreen(cols, rows);
-  octx.drawImage(videoEl, 0, 0, cols, rows);
+  octx.save();
+  if (cfg.mirror) {
+    octx.translate(cols, 0);
+    octx.scale(-1, 1);
+  }
+  octx.drawImage(videoEl, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+  octx.restore();
   let data;
   try { data = octx.getImageData(0, 0, cols, rows).data; }
   catch { return { rows, cols }; }
@@ -145,6 +153,10 @@ export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides) {
     for (let i = 0; i < lumGrid.length; i++) {
       lumGrid[i] = Math.min(1.0, Math.max(0.0, (lumGrid[i] - minLum) / range));
     }
+  }
+
+  if (cfg.dithering && cfg.dithering !== 'none') {
+    applyDithering(lumGrid, cols, rows, nChars, cfg.dithering);
   }
 
   const edgeThresholdSq = edgeThreshold * edgeThreshold;
@@ -840,8 +852,8 @@ export class AsciliSrtExporter {
     // Bound pixel count: up to 100 cols for YTT, 160 cols for ASS, 32 for basic YouTube VTT, 40 for standard SRT/VTT
     const maxCols = isAss ? 160 : isYtt ? 100 : isYoutube ? 32 : 40;
     const defaultCols = isAss ? 160 : isYtt ? (cfg.cols && cfg.cols >= 80 ? Math.min(100, cfg.cols) : 80) : isYoutube ? 30 : 80;
-    const cols = Math.min(maxCols, Math.max(16, Math.round(isYoutube ? (cfg.cols ? Math.min(cfg.cols, 32) : 30) : (cfg.cols || defaultCols))));
-    const calculatedRows = Math.max(1, Math.round(cols * (videoHeight / videoWidth) * 0.45));
+    const crop = computeCropBox(videoWidth, videoHeight, cfg.aspectRatio);
+    const calculatedRows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
     const rows = isYoutube ? Math.min(4, Math.max(2, calculatedRows)) : calculatedRows;
     const fontSize = isAss ? (cfg.assFontSize || (cfg.fontSize === 10 || !cfg.fontSize ? 9 : cfg.fontSize)) : (cfg.fontSize || 10);
     const duration = Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? videoEl.duration : 0;
@@ -1150,7 +1162,13 @@ export class AsciliSrtExporter {
     const monoLower = monoColor.toLowerCase();
 
     const renderText = () => {
-      sample.ctx.drawImage(videoEl, 0, 0, cols, rows);
+      sample.ctx.save();
+      if (cfg.mirror) {
+        sample.ctx.translate(cols, 0);
+        sample.ctx.scale(-1, 1);
+      }
+      sample.ctx.drawImage(videoEl, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+      sample.ctx.restore();
       const pixels = sample.ctx.getImageData(0, 0, cols, rows).data;
       const lines = new Array(rows);
 
@@ -1948,3 +1966,218 @@ export class AsciliLiveRecorder {
     }
   }
 }
+
+// ─── AsciliGifRecorder ───────────────────────────────────────────────────────
+// Records 3-5 second animated looping GIFs directly from the live stream.
+
+export class AsciliGifRecorder {
+  constructor() {
+    this._encoder = null;
+    this._running = false;
+    this._frames = 0;
+    this._maxFrames = 40;
+    this._lastCapture = 0;
+    this._intervalMs = 100; // 10 fps
+    this._onProgress = null;
+  }
+
+  get running() { return this._running; }
+
+  startRecording(width, height, options = {}) {
+    this._encoder = new AsciliGifEncoder(width, height, {
+      delayMs: options.delayMs || 100,
+      repeat: 0,
+    });
+    this._running = true;
+    this._frames = 0;
+    this._intervalMs = options.delayMs || 100;
+    this._maxFrames = Math.max(5, options.maxFrames || 40);
+    this._lastCapture = 0;
+    this._onProgress = options.onProgress;
+  }
+
+  captureFrame(canvas) {
+    if (!this._running || !this._encoder) return null;
+    const now = performance.now();
+    if (now - this._lastCapture < this._intervalMs - 15) return null;
+    this._lastCapture = now;
+
+    this._encoder.addFrame(canvas);
+    this._frames++;
+    this._onProgress?.(this._frames / this._maxFrames, this._frames, this._maxFrames);
+
+    if (this._frames >= this._maxFrames) {
+      return this.finish();
+    }
+    return null;
+  }
+
+  finish() {
+    if (!this._running || !this._encoder) return null;
+    this._running = false;
+    const blob = this._encoder.finish();
+    this._encoder = null;
+    return blob;
+  }
+
+  stop() {
+    return this.finish();
+  }
+
+  cancel() {
+    this._running = false;
+    this._encoder = null;
+  }
+}
+
+// ─── AsciliGifVideoExporter ─────────────────────────────────────────────────
+// Converts an uploaded video into an animated GIF (.gif) file with ASCII styling.
+
+export class AsciliGifVideoExporter {
+  constructor() {
+    this._running = false;
+    this._encoder = null;
+    this._frameCanvas = null;
+    this._cleanup = null;
+    this._wakeLock = null;
+  }
+
+  get running() { return this._running; }
+
+  async start(videoEl, cfg, options = {}) {
+    if (this._running) throw new Error('A GIF export is already in progress.');
+    if (!videoEl || !videoEl.videoWidth || !videoEl.videoHeight) {
+      throw new Error('Video metadata not loaded.');
+    }
+
+    const duration = videoEl.duration && isFinite(videoEl.duration) ? videoEl.duration : 10;
+    const targetFps = Math.min(20, Math.max(1, options.targetFps || 10));
+    const delayMs = Math.round(1000 / targetFps);
+    const maxFrames = Math.min(120, Math.max(5, options.maxFrames || Math.ceil(duration * targetFps)));
+    const sampleInterval = 1 / targetFps;
+
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+    const cols = Math.min(cfg.cols || 80, 100);
+    const fontSize = Math.min(cfg.fontSize || 10, 12);
+    const charW = fontSize * CHAR_W_FACTOR;
+    const charH = fontSize;
+    const canvasW = Math.ceil(cols * charW);
+    const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
+    const canvasH = rows * charH;
+
+    this._frameCanvas = document.createElement('canvas');
+    this._frameCanvas.width = canvasW;
+    this._frameCanvas.height = canvasH;
+
+    this._encoder = new AsciliGifEncoder(canvasW, canvasH, {
+      delayMs,
+      repeat: 0,
+    });
+
+    this._running = true;
+    let framesCount = 0;
+    let lastSampleTime = -1;
+    let finishing = false;
+
+    try {
+      if ('wakeLock' in navigator) {
+        this._wakeLock = await navigator.wakeLock.request('screen').catch(() => null);
+      }
+    } catch {}
+
+    const finish = () => {
+      if (finishing) return;
+      finishing = true;
+      this._running = false;
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
+      try { videoEl.playbackRate = 1.0; } catch {}
+      this._cleanup?.();
+      const blob = this._encoder ? this._encoder.finish() : null;
+      this._encoder = null;
+      options.onComplete?.(blob, 'image/gif', { savedToDisk: false, cols, rows, frames: framesCount });
+    };
+
+    const processTick = () => {
+      if (!this._running || finishing) return;
+      const sourceTime = Math.min(duration, videoEl.currentTime);
+
+      if (lastSampleTime < 0 || sourceTime - lastSampleTime >= sampleInterval - 0.002 || sourceTime >= duration - 0.05) {
+        renderFrameToCanvas(videoEl, this._frameCanvas, {
+          ...cfg,
+          cols,
+          rows,
+          fontSize,
+        }, { fontSize });
+
+        this._encoder.addFrame(this._frameCanvas);
+        framesCount++;
+        lastSampleTime = sourceTime;
+
+        const progress = Math.min(1, framesCount / maxFrames);
+        options.onProgress?.(progress, framesCount, maxFrames);
+
+        if (framesCount >= maxFrames || videoEl.ended || sourceTime >= duration - 0.05) {
+          finish();
+          return;
+        }
+      }
+
+      if (videoEl.ended || sourceTime >= duration - 0.05) {
+        finish();
+        return;
+      }
+
+      scheduleNext();
+    };
+
+    let isScheduled = false;
+    let rvfcId = null;
+    let animId = null;
+
+    const scheduleNext = () => {
+      if (!this._running || finishing || isScheduled) return;
+      isScheduled = true;
+      if (typeof videoEl.requestVideoFrameCallback === 'function') {
+        rvfcId = videoEl.requestVideoFrameCallback(() => {
+          isScheduled = false;
+          processTick();
+        });
+      } else {
+        animId = requestAnimationFrame(() => {
+          isScheduled = false;
+          processTick();
+        });
+      }
+    };
+
+    this._cleanup = () => {
+      if (rvfcId && typeof videoEl.cancelVideoFrameCallback === 'function') {
+        videoEl.cancelVideoFrameCallback(rvfcId);
+      }
+      if (animId) cancelAnimationFrame(animId);
+      videoEl.removeEventListener('ended', finish);
+    };
+
+    videoEl.addEventListener('ended', finish);
+    videoEl.currentTime = 0;
+    try {
+      videoEl.playbackRate = 1.0;
+      await videoEl.play();
+    } catch {}
+    scheduleNext();
+  }
+
+  stop() {
+    this._running = false;
+    this._cleanup?.();
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
+    const blob = this._encoder ? this._encoder.finish() : null;
+    this._encoder = null;
+    return blob;
+  }
+}
+

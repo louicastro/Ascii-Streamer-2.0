@@ -125,6 +125,105 @@ function hexToRgbVec3(hex) {
   return [isNaN(r) ? 0.22 : r, isNaN(g) ? 1.0 : g, isNaN(b) ? 0.32 : b];
 }
 
+export function computeCropBox(vw, vh, aspect) {
+  if (!aspect || aspect === 'auto') return { sx: 0, sy: 0, sw: vw, sh: vh };
+  let targetRatio = 16 / 9;
+  if (aspect === '9:16') targetRatio = 9 / 16;
+  else if (aspect === '1:1') targetRatio = 1.0;
+  else if (aspect === '4:3') targetRatio = 4 / 3;
+  else if (aspect === '16:9') targetRatio = 16 / 9;
+
+  const currentRatio = vw / vh;
+  if (currentRatio > targetRatio) {
+    const sw = Math.round(vh * targetRatio);
+    const sx = Math.round((vw - sw) / 2);
+    return { sx, sy: 0, sw, sh: vh };
+  } else {
+    const sh = Math.round(vw / targetRatio);
+    const sy = Math.round((vh - sh) / 2);
+    return { sx: 0, sy, sw, sh };
+  }
+}
+
+export const BAYER_4X4 = [
+   0,  8,  2, 10,
+  12,  4, 14,  6,
+   3, 11,  1,  9,
+  15,  7, 13,  5
+];
+
+export function applyDithering(lumGrid, cols, rows, numLevels, mode = 'none') {
+  if (!mode || mode === 'none' || numLevels <= 1) return;
+
+  if (mode === 'bayer') {
+    const spread = 1.0 / (numLevels - 1);
+    for (let r = 0; r < rows; r++) {
+      const rOffset = r * cols;
+      const bRow = (r % 4) * 4;
+      for (let c = 0; c < cols; c++) {
+        const bVal = (BAYER_4X4[bRow + (c % 4)] / 16.0 - 0.46875) * spread;
+        const idx = rOffset + c;
+        const v = lumGrid[idx] + bVal;
+        lumGrid[idx] = v < 0 ? 0 : v > 1 ? 1 : v;
+      }
+    }
+    return;
+  }
+
+  if (mode === 'floyd') {
+    const step = 1.0 / (numLevels - 1);
+    for (let r = 0; r < rows; r++) {
+      const rOffset = r * cols;
+      const nextROffset = (r + 1) * cols;
+      const hasNextR = r + 1 < rows;
+      for (let c = 0; c < cols; c++) {
+        const idx = rOffset + c;
+        const oldVal = lumGrid[idx];
+        const quantIdx = Math.round(oldVal / step);
+        const newVal = Math.min(1.0, Math.max(0.0, quantIdx * step));
+        const err = oldVal - newVal;
+        lumGrid[idx] = newVal;
+
+        if (c + 1 < cols) lumGrid[idx + 1] += err * (7 / 16);
+        if (hasNextR) {
+          if (c > 0) lumGrid[nextROffset + c - 1] += err * (3 / 16);
+          lumGrid[nextROffset + c] += err * (5 / 16);
+          if (c + 1 < cols) lumGrid[nextROffset + c + 1] += err * (1 / 16);
+        }
+      }
+    }
+    return;
+  }
+
+  if (mode === 'atkinson') {
+    const step = 1.0 / (numLevels - 1);
+    const div8 = 1 / 8;
+    for (let r = 0; r < rows; r++) {
+      const rOffset = r * cols;
+      for (let c = 0; c < cols; c++) {
+        const idx = rOffset + c;
+        const oldVal = lumGrid[idx];
+        const quantIdx = Math.round(oldVal / step);
+        const newVal = Math.min(1.0, Math.max(0.0, quantIdx * step));
+        const err = (oldVal - newVal) * div8;
+        lumGrid[idx] = newVal;
+
+        if (c + 1 < cols) lumGrid[idx + 1] += err;
+        if (c + 2 < cols) lumGrid[idx + 2] += err;
+        if (r + 1 < rows) {
+          const nextR = (r + 1) * cols;
+          if (c > 0) lumGrid[nextR + c - 1] += err;
+          lumGrid[nextR + c] += err;
+          if (c + 1 < cols) lumGrid[nextR + c + 1] += err;
+        }
+        if (r + 2 < rows) {
+          lumGrid[(r + 2) * cols + c] += err;
+        }
+      }
+    }
+  }
+}
+
 export function getGraphicsProfile() {
   const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
   const gl = canvas ? (canvas.getContext('webgl2') || canvas.getContext('webgl')) : null;
@@ -269,6 +368,11 @@ uniform float u_idxPipe;
 uniform float u_idxSlash;
 uniform float u_idxBackslash;
 
+uniform int   u_mirror;
+uniform int   u_ditherMode;
+uniform vec4  u_cropRect;
+uniform float u_charCount;
+
 vec3 adjustColor(vec3 c) {
   if (u_brightness != 0.0) {
     c += u_brightness;
@@ -287,25 +391,48 @@ vec3 adjustColor(vec3 c) {
 }
 
 void main() {
-  vec2 cellCoord  = v_uv * u_gridSize;
+  vec2 coord = v_uv;
+  if (u_mirror == 1) {
+    coord.x = 1.0 - coord.x;
+  }
+
+  vec2 cellCoord  = coord * u_gridSize;
   vec2 cellIndex  = floor(cellCoord);
   vec2 inCell     = fract(cellCoord);
 
-  vec2 cellCenter = (cellIndex + 0.5) / u_gridSize;
-  vec3 rawRgb     = texture2D(u_video, cellCenter).rgb;
+  vec2 normCenter = (cellIndex + 0.5) / u_gridSize;
+  vec2 sampleCenter = u_cropRect.xy + normCenter * u_cropRect.zw;
+  vec3 rawRgb     = texture2D(u_video, sampleCenter).rgb;
   vec3 rgb        = adjustColor(rawRgb);
   float lum       = dot(rgb, vec3(0.299, 0.587, 0.114));
+
+  if (u_ditherMode == 1) {
+    vec2 b = mod(cellIndex, 4.0);
+    float bIdx = b.y * 4.0 + b.x;
+    float bVal = 0.0;
+    if (bIdx < 4.0) {
+      if (bIdx < 1.0) bVal = 0.0; else if (bIdx < 2.0) bVal = 8.0; else if (bIdx < 3.0) bVal = 2.0; else bVal = 10.0;
+    } else if (bIdx < 8.0) {
+      if (bIdx < 5.0) bVal = 12.0; else if (bIdx < 6.0) bVal = 4.0; else if (bIdx < 7.0) bVal = 14.0; else bVal = 6.0;
+    } else if (bIdx < 12.0) {
+      if (bIdx < 9.0) bVal = 3.0; else if (bIdx < 10.0) bVal = 11.0; else if (bIdx < 11.0) bVal = 1.0; else bVal = 9.0;
+    } else {
+      if (bIdx < 13.0) bVal = 15.0; else if (bIdx < 14.0) bVal = 7.0; else if (bIdx < 15.0) bVal = 13.0; else bVal = 5.0;
+    }
+    float spread = 1.0 / max(1.0, u_charCount - 1.0);
+    lum = clamp(lum + (bVal / 16.0 - 0.46875) * spread, 0.0, 1.0);
+  }
 
   float charIdx = -1.0;
 
   if (u_enableEdge == 1 && cellIndex.x > 0.0 && cellIndex.x < u_gridSize.x - 1.0 && cellIndex.y > 0.0 && cellIndex.y < u_gridSize.y - 1.0) {
-    vec2 stepX = vec2(1.0 / u_gridSize.x, 0.0);
-    vec2 stepY = vec2(0.0, 1.0 / u_gridSize.y);
+    vec2 stepX = vec2(u_cropRect.z / u_gridSize.x, 0.0);
+    vec2 stepY = vec2(0.0, u_cropRect.w / u_gridSize.y);
 
-    float lumR = dot(texture2D(u_video, cellCenter + stepX).rgb, vec3(0.299, 0.587, 0.114));
-    float lumL = dot(texture2D(u_video, cellCenter - stepX).rgb, vec3(0.299, 0.587, 0.114));
-    float lumD = dot(texture2D(u_video, cellCenter + stepY).rgb, vec3(0.299, 0.587, 0.114));
-    float lumU = dot(texture2D(u_video, cellCenter - stepY).rgb, vec3(0.299, 0.587, 0.114));
+    float lumR = dot(texture2D(u_video, sampleCenter + stepX).rgb, vec3(0.299, 0.587, 0.114));
+    float lumL = dot(texture2D(u_video, sampleCenter - stepX).rgb, vec3(0.299, 0.587, 0.114));
+    float lumD = dot(texture2D(u_video, sampleCenter + stepY).rgb, vec3(0.299, 0.587, 0.114));
+    float lumU = dot(texture2D(u_video, sampleCenter - stepY).rgb, vec3(0.299, 0.587, 0.114));
 
     float gx = (lumR - lumL) * 0.5;
     float gy = (lumD - lumU) * 0.5;
@@ -444,6 +571,11 @@ export class AsciliWebGLRenderer {
     this._uIdxPipe         = gl.getUniformLocation(this._program, 'u_idxPipe');
     this._uIdxSlash        = gl.getUniformLocation(this._program, 'u_idxSlash');
     this._uIdxBackslash    = gl.getUniformLocation(this._program, 'u_idxBackslash');
+
+    this._uMirror          = gl.getUniformLocation(this._program, 'u_mirror');
+    this._uDitherMode      = gl.getUniformLocation(this._program, 'u_ditherMode');
+    this._uCropRect        = gl.getUniformLocation(this._program, 'u_cropRect');
+    this._uCharCount       = gl.getUniformLocation(this._program, 'u_charCount');
 
     this._texVideo = gl.createTexture();
     this._texAtlas = gl.createTexture();
@@ -589,6 +721,12 @@ export class AsciliWebGLRenderer {
     gl.uniform1f(this._uIdxPipe,      atlas.charToIdx.get('|') ?? 0);
     gl.uniform1f(this._uIdxSlash,     atlas.charToIdx.get('/') ?? 0);
     gl.uniform1f(this._uIdxBackslash, atlas.charToIdx.get('\\') ?? 0);
+
+    gl.uniform1i(this._uMirror, config.mirror ? 1 : 0);
+    gl.uniform1i(this._uDitherMode, config.dithering === 'bayer' ? 1 : 0);
+    const crop = computeCropBox(vw, vh, config.aspectRatio);
+    gl.uniform4f(this._uCropRect, crop.sx / vw, crop.sy / vh, crop.sw / vw, crop.sh / vh);
+    gl.uniform1f(this._uCharCount, atlas.charCount || 10);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this._quadBuf);
     gl.enableVertexAttribArray(this._aPos);
@@ -820,12 +958,13 @@ export class AsciliEngine {
 
     const vw = videoEl.videoWidth  || videoEl.width  || 640;
     const vh = videoEl.videoHeight || videoEl.height || 480;
-    const cellRatio = (vh / vw) * 0.45;
+    const crop = computeCropBox(vw, vh, config.aspectRatio);
+    const cellRatio = (crop.sh / crop.sw) * 0.45;
     const requestedCols = Math.min(1000, Math.max(20, Math.round(config.cols || 80)));
     const maxColsForSafeFrame = Math.floor(Math.sqrt(500_000 / Math.max(cellRatio, 0.01)));
     const cols = config.cols ? Math.min(1000, Math.max(20, Math.round(config.cols))) : Math.min(requestedCols, Math.max(20, maxColsForSafeFrame));
 
-    const rows = config.rows ?? Math.max(1, Math.round(cols * (vh / vw) * 0.45));
+    const rows = config.rows ?? Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
     const totalCells = rows * cols;
 
     this._lastCols   = cols;
@@ -960,7 +1099,18 @@ export class AsciliEngine {
       this._sampleCanvas.width  = cols;
       this._sampleCanvas.height = rows;
     }
-    this._sampleCtx.drawImage(videoEl, 0, 0, cols, rows);
+    const vw = videoEl.videoWidth  || videoEl.width  || 640;
+    const vh = videoEl.videoHeight || videoEl.height || 480;
+    const crop = computeCropBox(vw, vh, config.aspectRatio);
+
+    this._sampleCtx.save();
+    if (config.mirror) {
+      this._sampleCtx.translate(cols, 0);
+      this._sampleCtx.scale(-1, 1);
+    }
+    this._sampleCtx.drawImage(videoEl, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+    this._sampleCtx.restore();
+
     let imgData;
     try { imgData = this._sampleCtx.getImageData(0, 0, cols, rows).data; } catch { return; }
 
@@ -977,18 +1127,26 @@ export class AsciliEngine {
     const colorGrid = this._fallbackColors;
     const n = this._atlas.charCount;
 
+    const lumGrid = new Float32Array(cells);
     for (let i = 0; i < cells; i++) {
       const p4 = i * 4;
       const r = imgData[p4], g = imgData[p4+1], b = imgData[p4+2];
-      const lum = (0.299*r + 0.587*g + 0.114*b) / 255.0;
-      let ci = (lum * (n - 1) + 0.5) | 0;
-      if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
-      if (config.invertChars) ci = (n - 1) - ci;
-      charGrid[i] = ci;
+      lumGrid[i] = (0.299*r + 0.587*g + 0.114*b) / 255.0;
       if (!isMono) {
         const p3 = i * 3;
         colorGrid[p3] = r; colorGrid[p3+1] = g; colorGrid[p3+2] = b;
       }
+    }
+
+    if (config.dithering && config.dithering !== 'none') {
+      applyDithering(lumGrid, cols, rows, n, config.dithering);
+    }
+
+    for (let i = 0; i < cells; i++) {
+      let ci = (lumGrid[i] * (n - 1) + 0.5) | 0;
+      if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
+      if (config.invertChars) ci = (n - 1) - ci;
+      charGrid[i] = ci;
     }
 
     if (config.temporalStability !== false) {
@@ -1019,12 +1177,33 @@ export class AsciliEngine {
     off.width  = cols;
     off.height = rows;
     const octx = off.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(src, 0, 0, cols, rows);
-    const imgData = octx.getImageData(0, 0, cols, rows).data;
+    const vw = src.videoWidth  || src.width  || 640;
+    const vh = src.videoHeight || src.height || 480;
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
 
+    octx.save();
+    if (cfg.mirror) {
+      octx.translate(cols, 0);
+      octx.scale(-1, 1);
+    }
+    octx.drawImage(src, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+    octx.restore();
+
+    const imgData = octx.getImageData(0, 0, cols, rows).data;
     const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
     const nChars = chars.length;
     const invert = cfg.invertChars || false;
+
+    const cells = rows * cols;
+    const lumGrid = new Float32Array(cells);
+    for (let i = 0; i < cells; i++) {
+      const p4 = i * 4;
+      lumGrid[i] = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
+    }
+
+    if (cfg.dithering && cfg.dithering !== 'none') {
+      applyDithering(lumGrid, cols, rows, nChars, cfg.dithering);
+    }
 
     const lines = [];
     const chunkSize = 200;
@@ -1035,9 +1214,7 @@ export class AsciliEngine {
         let line = '';
         const offset = cr * cols;
         for (let c = 0; c < cols; c++) {
-          const p4 = (offset + c) * 4;
-          const lum = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
-          let ci = (lum * (nChars - 1) + 0.5) | 0;
+          let ci = (lumGrid[offset + c] * (nChars - 1) + 0.5) | 0;
           if (ci >= nChars) ci = nChars - 1; else if (ci < 0) ci = 0;
           if (invert) ci = (nChars - 1) - ci;
           line += chars[ci] ?? ' ';

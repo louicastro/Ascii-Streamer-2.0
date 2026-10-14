@@ -1,0 +1,25 @@
+{
+  "name": "ASCILI — ASCII Video Engine",
+  "short_name": "ASCILI",
+  "description": "Real-time ASCII Video, Subtitle and GIF Generator",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080c08",
+  "theme_color": "#39ff52",
+  "icons": [
+    {
+      "src": "./public/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./public/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["multimedia", "utilities", "graphics", "video"]
+}
