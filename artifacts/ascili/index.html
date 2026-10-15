@@ -367,8 +367,16 @@
           </div>
         </section>
 
+        <section class="cv-section" id="cvPreviewSection" style="display:none">
+          <div class="cv-section-label" id="cvPreviewSectionLabel">RENDER PREVIEW</div>
+          <div class="cv-preview-row">
+            <canvas class="cv-preview-canvas" id="cvPreviewCanvas" width="640" height="360"></canvas>
+            <span class="cv-preview-label" id="cvPreviewBadge">ASCII PREVIEW</span>
+          </div>
+        </section>
+
         <section class="cv-section" id="cvProgressSection" style="display:none">
-          <div class="cv-section-label">ENCODING PROGRESS</div>
+          <div class="cv-section-label" id="cvProgressSectionLabel">ENCODING PROGRESS</div>
           <div class="cv-error" id="cvError" role="alert" hidden></div>
           <div class="cv-progress-bar"><div class="cv-progress-fill" id="cvProgressFill"></div></div>
           <div class="cv-progress-meta">
@@ -377,10 +385,6 @@
             <span class="cv-speed-badge" id="cvSpeedBadge"></span>
             <span id="cvProgressTime"></span>
             <span id="cvProgressEta"></span>
-          </div>
-          <div class="cv-preview-row">
-            <canvas class="cv-preview-canvas" id="cvPreviewCanvas" width="640" height="360"></canvas>
-            <span class="cv-preview-label">RENDER PREVIEW</span>
           </div>
         </section>
 

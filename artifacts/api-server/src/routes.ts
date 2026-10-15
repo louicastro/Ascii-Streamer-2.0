@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import { HealthCheckResponse } from "@workspace/api-zod";
 import { logger } from "./lib/logger";
 
 const router = Router();
@@ -7,21 +8,23 @@ const router = Router();
 /**
  * Health check endpoint
  */
-router.get("/health", (req: Request, res: Response) => {
-  const health = {
+router.get("/health", (_req: Request, res: Response) => {
+  const healthData = {
     status: "ok",
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    uptime: Math.floor(process.uptime()),
     environment: process.env.NODE_ENV || "development",
     version: "1.0.0",
   };
-  res.json(health);
+  // Validate schema compatibility
+  HealthCheckResponse.parse(healthData);
+  res.json(healthData);
 });
 
 /**
  * API status
  */
-router.get("/status", (req: Request, res: Response) => {
+router.get("/status", (_req: Request, res: Response) => {
   res.json({
     api: "ascii-streamer",
     status: "online",
@@ -30,10 +33,10 @@ router.get("/status", (req: Request, res: Response) => {
 });
 
 /**
- * Catch-all 404
+ * Catch-all JSON 404 for unknown /api/* routes
  */
 router.use((req: Request, res: Response) => {
-  logger.warn({ path: req.path }, "Not found");
+  logger.warn({ path: req.path }, "API route not found");
   res.status(404).json({
     error: "Not found",
     path: req.path,

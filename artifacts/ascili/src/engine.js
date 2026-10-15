@@ -141,7 +141,7 @@ export function computeCropBox(vw, vh, aspect) {
   } else {
     const sh = Math.round(vw / targetRatio);
     const sy = Math.round((vh - sh) / 2);
-    return { sx: 0, sy, sw, sh };
+    return { sx: 0, sy, sw: vw, sh };
   }
 }
 

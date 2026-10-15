@@ -8,6 +8,11 @@ const repoName = process.env.GITHUB_REPOSITORY?.split("/")[1];
 const defaultBasePath = repoName ? `/${repoName}/` : "/";
 const basePath = process.env.BASE_PATH || defaultBasePath;
 
+const host = process.env.HOST || "localhost";
+const allowedHosts = process.env.ALLOWED_HOSTS
+  ? process.env.ALLOWED_HOSTS.split(",").map((h) => h.trim()).filter(Boolean)
+  : undefined;
+
 export default defineConfig({
   base: basePath,
   plugins: [
@@ -33,15 +38,15 @@ export default defineConfig({
   server: {
     port,
     strictPort: true,
-    host: "0.0.0.0",
-    allowedHosts: true,
+    host,
+    ...(allowedHosts ? { allowedHosts } : {}),
     fs: {
       strict: true,
     },
   },
   preview: {
     port,
-    host: "0.0.0.0",
-    allowedHosts: true,
+    host,
+    ...(allowedHosts ? { allowedHosts } : {}),
   },
 });

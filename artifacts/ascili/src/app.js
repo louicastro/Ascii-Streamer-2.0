@@ -1382,6 +1382,8 @@ const cvCfgFpsOverride = $('cvCfgFpsOverride');
 const cvExportType     = $('cvExportType');
 const cvSrtNote        = $('cvSrtNote');
 const cvProgressSection = $('cvProgressSection');
+const cvPreviewSection  = $('cvPreviewSection');
+const cvPreviewBadge    = $('cvPreviewBadge');
 const cvError           = $('cvError');
 const cvProgressFill   = $('cvProgressFill');
 const cvProgressPct    = $('cvProgressPct');
@@ -1413,6 +1415,7 @@ let cvTemporaryExport = null;
 let cvProgressClock = null;
 let cvProgressStartedAt = 0;
 let cvCurrentProgress = 0;
+let lastPreviewDraw = 0;
 
 function fmtTime(s) {
   if (!isFinite(s) || s == null) return '--:--';
@@ -1644,18 +1647,28 @@ async function chooseVideoFile(mimeType, suggestedName) {
     : isSrt
     ? 'SubRip Subtitles (.srt)'
     : 'Rendered video';
+  const acceptMap = isYtt
+    ? { 'application/xml': ['.xml', '.ytt'], 'text/plain': ['.ytt', '.txt'] }
+    : isAss
+    ? { 'text/plain': ['.ass', '.txt'], 'text/x-ssa': ['.ass', '.ssa'] }
+    : isVtt
+    ? { 'text/vtt': ['.vtt'], 'text/plain': ['.vtt', '.txt'] }
+    : isSrt
+    ? { 'text/plain': ['.srt', '.txt'], 'application/x-subrip': ['.srt'] }
+    : { [mimeType.split(';')[0]]: [extension] };
+
   try {
     const handle = await window.showSaveFilePicker({
       suggestedName,
       types: [{
         description: desc,
-        accept: { [mimeType.split(';')[0]]: [extension] },
+        accept: acceptMap,
       }],
     });
     return await handle.createWritable();
   } catch (error) {
     if (error.name === 'AbortError') return false;
-    throw error;
+    return null;
   }
 }
 
@@ -1729,11 +1742,16 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
 }
 
 function drawConverterPreview(videoEl, overrideCfg = null) {
-  if (!videoEl?.videoWidth || !cvPreviewCanvas) return;
+  if (!videoEl || !cvPreviewCanvas) return;
+  const vw = videoEl.videoWidth || videoEl.width;
+  const vh = videoEl.videoHeight || videoEl.height;
+  if (!vw || !vh) return;
+
   const baseCfg = overrideCfg || cfg;
   const previewCols = Math.min(baseCfg.cols || 80, 240);
-  const previewCfg = { ...baseCfg, cols: previewCols, fontSize: 4 };
-  renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: 4 });
+  const previewFontSize = Math.max(6, Math.min(12, Math.round(540 / (previewCols * CHAR_W_FACTOR))));
+  const previewCfg = { ...baseCfg, cols: previewCols, fontSize: previewFontSize };
+  renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize });
 }
 
 function cvRefreshSettings() {
@@ -1780,6 +1798,7 @@ function cvSetFile(file) {
     cvFileInfo.classList.add('loaded');
     cvMeta.textContent = `${sourceVideo.videoWidth}×${sourceVideo.videoHeight}  ·  ${fmtTime(sourceVideo.duration)}  ·  ${fmtBytes(file.size)}`;
     cvStart.disabled = false;
+    if (cvPreviewSection) cvPreviewSection.style.display = 'block';
     drawConverterPreview(sourceVideo);
   }
 
@@ -1790,6 +1809,9 @@ function cvSetFile(file) {
   }
   cvSourceVideo = document.createElement('video');
   cvSourceVideo.muted   = true;
+  cvSourceVideo.defaultMuted = true;
+  cvSourceVideo.setAttribute('muted', '');
+  cvSourceVideo.setAttribute('playsinline', '');
   cvSourceVideo.preload = 'auto';
   cvSourceVideo.playsInline = true;
   cvSourceVideo.style.position = 'fixed';
@@ -1804,26 +1826,33 @@ function cvSetFile(file) {
   cvSourceVideo.src     = URL.createObjectURL(file);
   document.body.appendChild(cvSourceVideo);
 
-  cvSourceVideo.addEventListener('loadedmetadata', () => {
+  const onReady = () => {
     const dur   = cvSourceVideo.duration;
     const vw    = cvSourceVideo.videoWidth;
     const vh    = cvSourceVideo.videoHeight;
+    if (!vw || !vh) return;
     cvFileInfo.textContent = isPlayerFile ? `${file.name} (Active Video)` : file.name;
     cvFileInfo.classList.add('loaded');
     cvMeta.textContent = `${vw}×${vh}  ·  ${fmtTime(dur)}  ·  ${fmtBytes(file.size)}`;
 
     updateLongVideoWarning();
 
-    cvStart.disabled = cvSourceVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA;
-    if (!cvStart.disabled) drawConverterPreview(cvSourceVideo);
+    cvStart.disabled = false;
+    if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+    drawConverterPreview(cvSourceVideo);
+  };
+
+  cvSourceVideo.addEventListener('loadedmetadata', () => {
+    try { cvSourceVideo.currentTime = 0.001; } catch {}
+    onReady();
+  });
+
+  cvSourceVideo.addEventListener('seeked', () => {
+    onReady();
   });
 
   cvSourceVideo.addEventListener('loadeddata', () => {
-    if (cvSourceVideo.videoWidth && cvSourceVideo.videoHeight) {
-      cvStart.disabled = false;
-      drawConverterPreview(cvSourceVideo);
-      updateLongVideoWarning();
-    }
+    onReady();
   });
 
   cvSourceVideo.addEventListener('error', () => {
@@ -1837,10 +1866,15 @@ function cvSetFile(file) {
   cvSourceVideo.load();
 }
 
-[cvCfgRes, cvCfgFpsOverride].forEach(control => {
+[cvCfgRes, cvCfgFpsOverride, cvExportType].forEach(control => {
   control.addEventListener('change', () => {
     updateExportModeUI();
     updateLongVideoWarning();
+    const vid = (cvSourceVideo && cvSourceVideo.videoWidth) ? cvSourceVideo : sourceVideo;
+    if (vid) {
+      if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+      drawConverterPreview(vid);
+    }
   });
 });
 
@@ -1882,6 +1916,11 @@ function openConverter() {
   cvRefreshSettings();
   if (state.currentFile) {
     cvSetFile(state.currentFile);
+  } else if (sourceVideo && sourceVideo.videoWidth) {
+    if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+    drawConverterPreview(sourceVideo);
+  } else {
+    if (cvPreviewSection) cvPreviewSection.style.display = 'none';
   }
   cvOverlay.classList.add('open');
   cvOverlay.setAttribute('aria-hidden', 'false');
@@ -1996,6 +2035,8 @@ cvStart.addEventListener('click', async () => {
     }
   }
   cvProgressSection.style.display = 'block';
+  if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+  if (cvPreviewBadge) cvPreviewBadge.textContent = 'ENCODING PREVIEW';
   cvError.hidden = true;
   cvError.textContent = '';
   cvDoneSection.style.display     = 'none';
@@ -2010,6 +2051,7 @@ cvStart.addEventListener('click', async () => {
   cvSave.style.display            = 'none';
   cvConvertAnother.style.display  = 'none';
   cvBlob = null;
+  lastPreviewDraw = 0;
   cvStartProgressClock();
   if (cvPreviewCanvas && cvSourceVideo) {
     drawConverterPreview(cvSourceVideo, exportCfg);
@@ -2027,18 +2069,22 @@ cvStart.addEventListener('click', async () => {
       writable,
       onProgress(pct, _elapsed, _eta, frameNum, frameTotal) {
         cvCurrentProgress = pct;
-        if (frameNum !== frameTotal && frameNum % Math.max(1, Math.floor(targetFps / 2)) !== 0) return;
         cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${frameTotal.toLocaleString()} frames`;
         cvProgressFill.style.width = (pct * 100).toFixed(1) + '%';
         cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
         cvUpdateProgressClock();
 
-        if (cvPreviewCanvas && cvSourceVideo) {
-          drawConverterPreview(cvSourceVideo, exportCfg);
+        const now = performance.now();
+        if (!lastPreviewDraw || now - lastPreviewDraw >= 50 || frameNum === frameTotal) {
+          lastPreviewDraw = now;
+          if (cvPreviewCanvas && cvSourceVideo && cvSourceVideo.videoWidth) {
+            drawConverterPreview(cvSourceVideo, exportCfg);
+          }
         }
       },
       async onComplete(blob, resultMime, result) {
         cvStopProgressClock();
+        if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
         if (temporaryExport) {
           try {
             await temporaryExport.prepareDownload();
@@ -2072,6 +2118,7 @@ cvStart.addEventListener('click', async () => {
         showToast(temporaryExport ? `${formatName} ready to download` : result?.savedToDisk ? `${formatName} saved to file` : `${formatName} ready to download`);
       },
       onError(message) {
+        if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
         cvStop.style.display = 'none';
         cvStart.style.display = '';
         cvStart.disabled = false;
@@ -2099,13 +2146,23 @@ cvStart.addEventListener('click', async () => {
           cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
           cvUpdateProgressClock();
 
-          if (cvPreviewCanvas && cvGifExporter._frameCanvas) {
-            const pCtx = cvPreviewCanvas.getContext('2d');
-            pCtx?.drawImage(cvGifExporter._frameCanvas, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
+          const now = performance.now();
+          if (!lastPreviewDraw || now - lastPreviewDraw >= 50 || frameNum === frameTotal) {
+            lastPreviewDraw = now;
+            if (cvPreviewCanvas && cvGifExporter._frameCanvas) {
+              const src = cvGifExporter._frameCanvas;
+              if (cvPreviewCanvas.width !== src.width || cvPreviewCanvas.height !== src.height) {
+                cvPreviewCanvas.width = src.width;
+                cvPreviewCanvas.height = src.height;
+              }
+              const pCtx = cvPreviewCanvas.getContext('2d');
+              pCtx?.drawImage(src, 0, 0);
+            }
           }
         },
         async onComplete(blob, resultMime, result) {
           cvStopProgressClock();
+          if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
           cvBlob = blob;
           cvMimeType = 'image/gif';
           cvStop.style.display = 'none';
@@ -2122,6 +2179,7 @@ cvStart.addEventListener('click', async () => {
           showToast('Animated GIF ready to download');
         },
         onError(message) {
+          if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
           cvStop.style.display = 'none';
           cvStart.style.display = '';
           cvStart.disabled = false;
@@ -2145,21 +2203,28 @@ cvStart.addEventListener('click', async () => {
     onProgress(pct) {
       cvCurrentProgress = pct;
       const frameNum = Math.round(pct * totalFrames);
-      if (frameNum !== totalFrames && frameNum % Math.max(1, Math.floor(targetFps / 2)) !== 0) return;
       cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
       cvProgressFill.style.width  = (pct * 100).toFixed(1) + '%';
       cvProgressPct.textContent   = (pct * 100).toFixed(0) + '%';
       cvUpdateProgressClock();
 
-      // Mirror exporter canvas → visible preview
-      const src = cvExporter.canvas;
-      if (src.width && src.height && (frameNum % Math.max(1, Math.floor(targetFps / 4)) === 0 || frameNum === totalFrames)) {
-        const pCtx = cvPreviewCanvas.getContext('2d');
-        pCtx?.drawImage(src, 0, 0, cvPreviewCanvas.width, cvPreviewCanvas.height);
+      const now = performance.now();
+      if (!lastPreviewDraw || now - lastPreviewDraw >= 50 || frameNum === totalFrames) {
+        lastPreviewDraw = now;
+        const src = cvExporter.canvas;
+        if (src && src.width > 0 && src.height > 0) {
+          if (cvPreviewCanvas.width !== src.width || cvPreviewCanvas.height !== src.height) {
+            cvPreviewCanvas.width = src.width;
+            cvPreviewCanvas.height = src.height;
+          }
+          const pCtx = cvPreviewCanvas.getContext('2d');
+          pCtx?.drawImage(src, 0, 0);
+        }
       }
     },
     async onComplete(blob, mimeType, result) {
       cvStopProgressClock();
+      if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
       if (temporaryExport) {
         try {
           await temporaryExport.prepareDownload();
@@ -2192,6 +2257,7 @@ cvStart.addEventListener('click', async () => {
       showToast(temporaryExport ? 'Video ready to download' : result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
     },
     onError(msg) {
+      if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
       cvStop.style.display  = 'none';
       cvStart.style.display = '';
       cvStart.disabled = false;
@@ -2241,6 +2307,7 @@ cvSave.addEventListener('click', () => {
 
 cvConvertAnother.addEventListener('click', () => {
   cvResetUI();
+  if (cvPreviewSection) cvPreviewSection.style.display = 'none';
   if (cvSourceVideo) {
     cvSourceVideo.pause();
     URL.revokeObjectURL(cvSourceVideo.src);

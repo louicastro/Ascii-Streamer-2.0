@@ -37,7 +37,7 @@ services:
     volumes:
       - ./artifacts/api-server/src:/app/api-server/src
       - ./artifacts/ascili/src:/app/ascili/src
-    command: npm run dev
+    command: pnpm run dev
 
   # Python Video Engine (Optional - commented by default)
   # python-engine:

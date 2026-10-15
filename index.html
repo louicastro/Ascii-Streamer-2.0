@@ -3,12 +3,46 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="0; url=./artifacts/ascili/" />
     <title>ASCILI — ASCII Video Engine</title>
-    <link rel="canonical" href="./artifacts/ascili/" />
+    <link rel="icon" type="image/svg+xml" href="./artifacts/ascili/public/favicon.svg" />
+    <style>
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        background: #080c09;
+        color: #39ff52;
+        font-family: "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 80vh;
+        text-align: center;
+      }
+      h1 { font-size: 2rem; margin-bottom: 0.5rem; letter-spacing: 2px; }
+      p { color: #a0c4ab; margin-top: 0; }
+      a {
+        color: #39ff52;
+        text-decoration: underline;
+        font-weight: bold;
+        margin-top: 16px;
+        display: inline-block;
+      }
+    </style>
   </head>
   <body>
-    <p>Opening ASCILI… <a href="./artifacts/ascili/">Continue to the app</a></p>
-    <script>window.location.replace('./artifacts/ascili/');</script>
+    <h1>&gt;ASCILI_</h1>
+    <p>Launching ASCII Video Engine…</p>
+    <p><a id="launch-link" href="./artifacts/ascili/">Continue to ASCILI App</a></p>
+    <script>
+      (function() {
+        var target = (window.location.protocol === 'file:' || window.location.pathname.includes('/artifacts/'))
+          ? './artifacts/ascili/'
+          : '/';
+        var link = document.getElementById('launch-link');
+        if (link) link.href = target;
+        window.location.replace(target);
+      })();
+    </script>
   </body>
 </html>

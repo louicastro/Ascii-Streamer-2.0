@@ -10,6 +10,6 @@ if [ -z "$DATABASE_URL" ]; then
   echo "Set DATABASE_URL=postgresql://user:pass@host/dbname to enable database."
 fi
 
-# Start Node.js API server
+# Start Node.js API server using exec for proper signal handling
 echo "Starting API server on port $PORT..."
-node --enable-source-maps ./api-server/dist/index.mjs
+exec node --enable-source-maps ./api-server/dist/index.mjs

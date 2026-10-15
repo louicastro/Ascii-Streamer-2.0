@@ -356,11 +356,12 @@ export class AsciliVideoExporter {
     // Compute fontSize override for target resolution
     const vw = videoEl.videoWidth || 640;
     const vh = videoEl.videoHeight || 480;
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
     const resInfo = computeFontForResolution(cfg.cols || 80, vw, vh, resolution);
     const overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;
     const fontSize = overrides?.fontSize ?? cfg.fontSize ?? 10;
     const cols = Math.min(1000, Math.max(20, Math.round(cfg.cols || 80)));
-    const rows = Math.max(1, Math.round(cols * (vh / vw) * 0.45));
+    const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
     const charW = fontSize * CHAR_W_FACTOR;
     const frameW = makeEven(Math.ceil(cols * charW));
     const frameH = makeEven(rows * fontSize);
@@ -486,9 +487,17 @@ export class AsciliVideoExporter {
                         : 4_000_000;
 
     let recorder = null;
-    const tryCandidates = [this._mimeType, ...candidates];
+    const hasAudio = stream.getAudioTracks().length > 0;
+    const effectiveCandidates = candidates.map(c => {
+      if (!hasAudio) {
+        return c.replace(/,opus|,mp4a\.[0-9a-zA-Z.]+/g, '');
+      }
+      return c;
+    });
+
+    const initialMime = this._mimeType ? (hasAudio ? this._mimeType : this._mimeType.replace(/,opus|,mp4a\.[0-9a-zA-Z.]+/g, '')) : null;
+    const tryCandidates = [initialMime, ...effectiveCandidates].filter(Boolean);
     for (const cand of tryCandidates) {
-      if (!cand) continue;
       try {
         if (MediaRecorder.isTypeSupported(cand)) {
           recorder = new MediaRecorder(stream, {
@@ -503,8 +512,8 @@ export class AsciliVideoExporter {
     if (!recorder && stream.getAudioTracks().length > 0) {
       // Audio tracks may conflict with codec — remove and retry video-only
       stream.getAudioTracks().forEach(track => stream.removeTrack(track));
-      for (const cand of tryCandidates) {
-        if (!cand) continue;
+      const videoOnlyCandidates = candidates.map(c => c.replace(/,opus|,mp4a\.[0-9a-zA-Z.]+/g, ''));
+      for (const cand of videoOnlyCandidates) {
         try {
           if (MediaRecorder.isTypeSupported(cand)) {
             recorder = new MediaRecorder(stream, {
@@ -852,6 +861,9 @@ export class AsciliSrtExporter {
     // Bound pixel count: up to 100 cols for YTT, 160 cols for ASS, 32 for basic YouTube VTT, 40 for standard SRT/VTT
     const maxCols = isAss ? 160 : isYtt ? 100 : isYoutube ? 32 : 40;
     const defaultCols = isAss ? 160 : isYtt ? (cfg.cols && cfg.cols >= 80 ? Math.min(100, cfg.cols) : 80) : isYoutube ? 30 : 80;
+    const cols = isYtt
+      ? (cfg.cols ? Math.min(100, Math.max(20, Math.round(cfg.cols))) : defaultCols)
+      : Math.min(maxCols, Math.max(10, Math.round(cfg.cols || defaultCols)));
     const crop = computeCropBox(videoWidth, videoHeight, cfg.aspectRatio);
     const calculatedRows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
     const rows = isYoutube ? Math.min(4, Math.max(2, calculatedRows)) : calculatedRows;
@@ -1404,6 +1416,7 @@ export class AsciliSrtExporter {
       let cue;
       if (isYtt) {
         const startMs = Math.round(start * 1000);
+        const durMs = Math.max(1, Math.round((safeEnd - start) * 1000));
         const bodyContent = colorMode === 'monochrome' ? `<s p="1">${safeText}</s>` : safeText;
         cue = `  <p t="${startMs}" d="${durMs}" wp="1">${bodyContent}</p>\n`;
         // Strictly prevent exceeding 20 MB ceiling (reserve 4096 bytes for closing tags)
