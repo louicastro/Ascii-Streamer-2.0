@@ -36,12 +36,15 @@
     <p><a id="launch-link" href="./artifacts/ascili/">Continue to ASCILI App</a></p>
     <script>
       (function() {
-        var target = (window.location.protocol === 'file:' || window.location.pathname.includes('/artifacts/'))
-          ? './artifacts/ascili/'
-          : '/';
+        var isLocal = window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        var target = isLocal
+          ? '/artifacts/ascili/'
+          : './artifacts/ascili/';
         var link = document.getElementById('launch-link');
         if (link) link.href = target;
-        window.location.replace(target);
+        if (window.location.pathname.indexOf('/artifacts/ascili') === -1) {
+          window.location.replace(target);
+        }
       })();
     </script>
   </body>
