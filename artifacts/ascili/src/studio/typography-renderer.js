@@ -22,37 +22,100 @@ import {
 } from './3d-math.js';
 import { evaluatePreset } from './presets.js';
 
-// Offscreen buffers for 3D rendering and post FX
-let _sceneCanvas = null;
-let _sceneCtx = null;
-let _asciiEngine = null;
+// Pattern cache for 3D ASCII hatching and glyph textures
+const _patternCache = new Map();
+
+export function getHashPattern(ctx, glyph = '#', color = '#ffffff', density = 'medium') {
+  if (typeof document === 'undefined') return color;
+  const tileSize = density === 'fine' ? { w: 7, h: 10, font: 'bold 9px monospace' }
+                 : density === 'coarse' ? { w: 13, h: 18, font: 'bold 16px monospace' }
+                 : { w: 9, h: 12, font: 'bold 11px monospace' };
+
+  const key = `hash:${glyph}:${color}:${density}`;
+  if (_patternCache.has(key)) return _patternCache.get(key);
+  if (_patternCache.size > 100) _patternCache.clear();
+
+  try {
+    const pCanvas = document.createElement('canvas');
+    pCanvas.width = tileSize.w;
+    pCanvas.height = tileSize.h;
+    const pCtx = pCanvas.getContext('2d');
+    if (!pCtx) return color;
+
+    pCtx.clearRect(0, 0, tileSize.w, tileSize.h);
+    pCtx.font = tileSize.font;
+    pCtx.fillStyle = color;
+    pCtx.textAlign = 'center';
+    pCtx.textBaseline = 'middle';
+    pCtx.fillText(glyph, tileSize.w / 2, tileSize.h / 2);
+
+    const pattern = ctx.createPattern(pCanvas, 'repeat');
+    if (pattern) {
+      _patternCache.set(key, pattern);
+      return pattern;
+    }
+  } catch (e) {
+    // Canvas pattern creation fallback
+  }
+  return color;
+}
+
+export function getDiagPattern(ctx, color = '#a0aab8', style = 'diag', density = 'medium') {
+  if (typeof document === 'undefined') return color;
+  const tileSize = density === 'fine' ? { w: 6, h: 8 }
+                 : density === 'coarse' ? { w: 12, h: 15 }
+                 : { w: 8, h: 11 };
+
+  const key = `diag:${color}:${style}:${density}`;
+  if (_patternCache.has(key)) return _patternCache.get(key);
+  if (_patternCache.size > 100) _patternCache.clear();
+
+  try {
+    const pCanvas = document.createElement('canvas');
+    pCanvas.width = tileSize.w;
+    pCanvas.height = tileSize.h;
+    const pCtx = pCanvas.getContext('2d');
+    if (!pCtx) return color;
+
+    pCtx.clearRect(0, 0, tileSize.w, tileSize.h);
+    pCtx.strokeStyle = color;
+    pCtx.lineWidth = 1.2;
+    pCtx.beginPath();
+
+    if (style === 'diagReverse') {
+      pCtx.moveTo(0, 0);
+      pCtx.lineTo(tileSize.w, tileSize.h);
+    } else if (style === 'cross') {
+      pCtx.moveTo(0, tileSize.h);
+      pCtx.lineTo(tileSize.w, 0);
+      pCtx.moveTo(0, 0);
+      pCtx.lineTo(tileSize.w, tileSize.h);
+    } else if (style === 'scanline') {
+      pCtx.moveTo(0, tileSize.h / 2);
+      pCtx.lineTo(tileSize.w, tileSize.h / 2);
+    } else {
+      // standard diagonal /
+      pCtx.moveTo(0, tileSize.h);
+      pCtx.lineTo(tileSize.w, 0);
+    }
+    pCtx.stroke();
+
+    const pattern = ctx.createPattern(pCanvas, 'repeat');
+    if (pattern) {
+      _patternCache.set(key, pattern);
+      return pattern;
+    }
+  } catch (e) {
+    // Canvas pattern creation fallback
+  }
+  return color;
+}
+
+// Offscreen buffers for post FX
 let _bloomCanvas = null;
 let _bloomCtx = null;
 let _glitchCanvas = null;
 let _glitchCtx = null;
-
-function getSceneCanvas(w, h) {
-  if (!_sceneCanvas && typeof document !== 'undefined') {
-    _sceneCanvas = document.createElement('canvas');
-    _sceneCtx = _sceneCanvas.getContext('2d', { alpha: false });
-  }
-  if (_sceneCanvas && (_sceneCanvas.width !== w || _sceneCanvas.height !== h)) {
-    _sceneCanvas.width = Math.max(1, w);
-    _sceneCanvas.height = Math.max(1, h);
-  }
-  return { canvas: _sceneCanvas, ctx: _sceneCtx };
-}
-
-function getAsciiEngine() {
-  if (!_asciiEngine && typeof AsciliEngine === 'function') {
-    try {
-      _asciiEngine = new AsciliEngine();
-    } catch (e) {
-      console.warn('[Studio] AsciliEngine initialization error:', e);
-    }
-  }
-  return _asciiEngine;
-}
 
 function getBloomCanvas(w, h) {
   if (!_bloomCanvas && typeof document !== 'undefined') {
@@ -133,41 +196,29 @@ export function renderStudioFrame(comp, time, canvas, opts = {}) {
     canvas.height = height;
   }
 
-  // Determine whether to use the authentic ASCII Stream Engine
-  const useAsciiEngine = comp.asciiEngineMode !== false;
-  let targetCanvas = canvas;
-  let targetCtx = null;
-
-  if (useAsciiEngine) {
-    const sc = getSceneCanvas(width, height);
-    targetCanvas = sc.canvas;
-    targetCtx = sc.ctx;
-  } else {
-    targetCtx = canvas.getContext('2d', { alpha: true });
-  }
-
-  if (!targetCtx || !targetCanvas) return;
+  const ctx = canvas.getContext('2d', { alpha: true });
+  if (!ctx) return;
 
   // Background clear
-  targetCtx.save();
+  ctx.save();
   const bgMode = comp.bgMode || 'black';
   if (bgMode === 'transparent') {
-    targetCtx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, width, height);
   } else if (bgMode === 'custom') {
-    targetCtx.fillStyle = comp.bgColor || '#060608';
-    targetCtx.fillRect(0, 0, width, height);
+    ctx.fillStyle = comp.bgColor || '#060608';
+    ctx.fillRect(0, 0, width, height);
   } else {
     // Deep black CRT background
-    targetCtx.fillStyle = '#060608';
-    targetCtx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#060608';
+    ctx.fillRect(0, 0, width, height);
   }
-  targetCtx.restore();
+  ctx.restore();
 
   const originX = width / 2;
   const originY = height / 2;
   const beatPulse = opts.beatPulse || 0;
 
-  // Render each visible layer onto 3D targetCanvas
+  // Render each visible layer directly onto the 3D typography canvas
   for (const layer of comp.layers) {
     if (!layer.visible) continue;
 
@@ -189,49 +240,7 @@ export function renderStudioFrame(comp, time, canvas, opts = {}) {
     const layerTime = clamp(time - startTime, 0, duration);
     const normT = duration > 0 ? clamp(layerTime / duration, 0, 1) : 0;
 
-    renderTextLayer(targetCanvas, targetCtx, width, height, layer, normT, layerTime, duration, originX, originY, beatPulse, opts);
-  }
-
-  // Convert 3D scene canvas into authentic ASCII stream using AsciliEngine
-  if (useAsciiEngine && targetCanvas) {
-    const engine = getAsciiEngine();
-    const primaryLayer = comp.layers.find((l) => l.id === comp.selectedLayerId) || comp.layers[0] || {};
-    const charSetKey = primaryLayer.charSet || comp.charSet || 'standard';
-    const customChars = primaryLayer.customChars || comp.customChars || '';
-    const charSet = (charSetKey === 'custom' && customChars.trim().length > 0) ? customChars : charSetKey;
-
-    let rendered = false;
-    if (engine) {
-      try {
-        const renderRes = engine.renderFrame(targetCanvas, canvas, {
-          charSet,
-          cols: primaryLayer.asciiCols || comp.asciiCols || 120,
-          colorMode: primaryLayer.colorMode || comp.colorMode || 'truecolor',
-          monoColor: primaryLayer.highlightColor || primaryLayer.frontColor || comp.monoColor || '#39ff52',
-          scanlines: Boolean(primaryLayer.scanlines ?? comp.scanlines),
-          dithering: primaryLayer.dithering || comp.dithering || 'none',
-          enableEdgeDetection: primaryLayer.enableEdgeDetection ?? (comp.enableEdgeDetection ?? true),
-          edgeThreshold: 0.16,
-          brightness: comp.brightness || 0,
-          contrast: comp.contrast || 15,
-          gamma: comp.gamma || 0,
-          saturation: comp.saturation || 10,
-          invertChars: Boolean(primaryLayer.invertChars ?? comp.invertChars),
-          aspectRatio: comp.aspectRatio || '16:9',
-        });
-        rendered = renderRes && renderRes.rendered !== false;
-      } catch (err) {
-        rendered = false;
-      }
-    }
-
-    if (!rendered) {
-      // Fallback: direct draw if WebGL context not ready
-      const displayCtx = canvas.getContext('2d');
-      if (displayCtx && targetCanvas !== canvas) {
-        displayCtx.drawImage(targetCanvas, 0, 0);
-      }
-    }
+    renderTextLayer(canvas, ctx, width, height, layer, normT, layerTime, duration, originX, originY, beatPulse, opts);
   }
 }
 
@@ -316,112 +325,241 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
   const hasCharReveal = presetRes.visibleCharCount !== undefined;
   let charCounter = 0;
 
-  // Slices: for long text, 3 depth slices; for short text, full slices
-  const effectiveSlices = isLongText ? 3 : Math.min(slices, 16);
+  // Patterns for 3D ASCII Typography
+  const frontGlyph = layer.frontGlyph || '#';
+  const glyphDensity = layer.glyphDensity || 'medium';
+  const hatchStyle = layer.hatchStyle || 'diag';
+  const isWireframe = layer.wireframe !== false;
+  const outlineWidth = layer.outlineWidth || 1.5;
+  const wireframeColor = layer.wireframeColor || '#ffffff';
 
-  // ─── 1. Extrusion Slices (Back to Front) ──────────────────────────────────
-  if (depth > 0) {
-    for (let s = 0; s < effectiveSlices; s++) {
-      const sliceFrac = s / effectiveSlices;
-      const sliceDepth = -depth * (1.0 - sliceFrac);
-      const sliceColor = lerpColor('#040810', extrudeColor, sliceFrac * 0.9);
-      const sliceOpacity = opacity * (0.35 + 0.65 * sliceFrac);
+  const hashPattern = getHashPattern(ctx, frontGlyph, litFrontColor, glyphDensity);
+  const effectiveSlices = isLongText ? 3 : Math.min(slices, 24);
 
-      ctx.save();
-      ctx.fillStyle = sliceColor;
-      ctx.globalAlpha = sliceOpacity;
+  // ─── Short Text: High-Precision Per-Character 3D Projection & Extrusion ─────
+  if (!isLongText && lines.length <= 4) {
+    // Measure characters and calculate layout
+    const charItems = [];
+    let globalCharIdx = 0;
 
-      if (layer.shadow && s === 0) {
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-        ctx.shadowBlur = 20;
-        ctx.shadowOffsetX = 8;
-        ctx.shadowOffsetY = 12;
+    for (let li = 0; li < lines.length; li++) {
+      const lineText = lines[li];
+      if (!lineText) continue;
+
+      const charWidths = [];
+      let totalLineWidth = 0;
+      for (let ci = 0; ci < lineText.length; ci++) {
+        const ch = lineText[ci];
+        const cw = ctx.measureText(ch).width + (layer.letterSpacing || 3);
+        charWidths.push(cw);
+        totalLineWidth += cw;
       }
 
-      for (let li = 0; li < lines.length; li++) {
-        const lineText = lines[li];
-        if (!lineText) continue;
+      let curX = -totalLineWidth / 2;
+      if (textAlign === 'left') curX = -width * 0.35;
+      else if (textAlign === 'right') curX = width * 0.35 - totalLineWidth;
 
-        const lineY = scrollY + li * lineHeight;
-        const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ + sliceDepth);
-        if (ptCenter.z <= -cameraZ + 1) continue;
+      const lineYOffset = scrollY + li * lineHeight;
 
-        const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
-        if (proj.scale <= 0) continue;
+      for (let ci = 0; ci < lineText.length; ci++) {
+        const ch = lineText[ci];
+        const cw = charWidths[ci];
+        const cx = curX + cw / 2;
+        curX += cw;
 
-        // Viewport frustum culling
-        if (proj.y < -200 || proj.y > height + 200) continue;
+        // Check if character is revealed in typewriter / reveal presets
+        const isRevealed = !hasCharReveal || globalCharIdx < presetRes.visibleCharCount;
+        globalCharIdx++;
+        if (!isRevealed) continue;
 
-        const renderedSize = Math.max(1, fontSize * proj.scale);
-        ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+        charItems.push({
+          char: ch,
+          localX: cx,
+          localY: lineYOffset,
+        });
+      }
+    }
 
-        let currentX = proj.x;
-        const lineMetrics = ctx.measureText(lineText).width;
-        if (textAlign === 'center') currentX -= lineMetrics / 2;
-        else if (textAlign === 'right') currentX -= lineMetrics;
+    // 1. Render Extrusion Slices (Back to Front)
+    if (depth > 0) {
+      for (let s = 0; s < effectiveSlices; s++) {
+        const sliceFrac = s / effectiveSlices;
+        const sliceDepth = -depth * (1.0 - sliceFrac);
+        const sliceColor = lerpColor('#05070f', extrudeColor, sliceFrac * 0.95);
+        const sliceOpacity = opacity * (0.4 + 0.6 * sliceFrac);
+        const diagPattern = getDiagPattern(ctx, sliceColor, hatchStyle, glyphDensity);
 
-        ctx.fillText(lineText, currentX, proj.y);
+        ctx.save();
+        ctx.globalAlpha = sliceOpacity;
+        ctx.textAlign = 'center';
+
+        if (layer.shadow && s === 0) {
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          ctx.shadowBlur = 24;
+          ctx.shadowOffsetX = 8;
+          ctx.shadowOffsetY = 12;
+        }
+
+        for (const item of charItems) {
+          const pt3D = transformPoint(rotMatrix, item.localX + posX, item.localY, posZ + sliceDepth);
+          if (pt3D.z <= -cameraZ + 1) continue;
+
+          const proj = project3D(pt3D.x, pt3D.y, pt3D.z, originX, originY, fov, cameraZ);
+          if (proj.scale <= 0) continue;
+
+          const renderedSize = Math.max(1, fontSize * proj.scale);
+          ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+
+          // Fill slice with diagonal hatch pattern
+          ctx.fillStyle = diagPattern || sliceColor;
+          ctx.fillText(item.char, proj.x, proj.y);
+
+          // Stepped contour outline ring
+          ctx.strokeStyle = sliceColor;
+          ctx.lineWidth = 1;
+          ctx.strokeText(item.char, proj.x, proj.y);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // 2. Render Front Face (z = 0)
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.textAlign = 'center';
+
+    for (const item of charItems) {
+      const pt3D = transformPoint(rotMatrix, item.localX + posX, item.localY, posZ);
+      if (pt3D.z <= -cameraZ + 1) continue;
+
+      const proj = project3D(pt3D.x, pt3D.y, pt3D.z, originX, originY, fov, cameraZ);
+      if (proj.scale <= 0) continue;
+
+      const renderedSize = Math.max(1, fontSize * proj.scale);
+      ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+
+      if (frontLight > 0.7) {
+        ctx.shadowColor = highlightColor;
+        ctx.shadowBlur = Math.round(8 * proj.scale);
+      } else {
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
       }
 
-      ctx.restore();
-    }
-  }
+      // Fill front face with dense '#' pattern
+      ctx.fillStyle = hashPattern || litFrontColor;
+      ctx.fillText(item.char, proj.x, proj.y);
 
-  // ─── 2. Front Face with Specular Lighting ────────────────────────────────
-  ctx.save();
-  ctx.fillStyle = litFrontColor;
-  ctx.globalAlpha = opacity;
-
-  for (let li = 0; li < lines.length; li++) {
-    let lineText = lines[li];
-    if (!lineText) continue;
-
-    const lineY = scrollY + li * lineHeight;
-    const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ);
-    if (ptCenter.z <= -cameraZ + 1) continue;
-
-    const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
-    if (proj.scale <= 0) continue;
-
-    // Viewport frustum culling
-    if (proj.y < -200 || proj.y > height + 200) {
-      charCounter += lineText.length;
-      continue;
+      // Crisp CAD/blueprint wireframe contour outline
+      if (isWireframe) {
+        ctx.strokeStyle = wireframeColor;
+        ctx.lineWidth = outlineWidth;
+        ctx.strokeText(item.char, proj.x, proj.y);
+      }
     }
 
-    // Typewriter or Reveal handling
-    if (hasCharReveal) {
-      const lineStart = charCounter;
-      const lineEnd = charCounter + lineText.length;
-      charCounter = lineEnd;
+    ctx.restore();
+  } else {
+    // ─── Long Multiline Text: Line-Based Frustum Culling ──────────────────────
+    if (depth > 0) {
+      for (let s = 0; s < effectiveSlices; s++) {
+        const sliceFrac = s / effectiveSlices;
+        const sliceDepth = -depth * (1.0 - sliceFrac);
+        const sliceColor = lerpColor('#05070f', extrudeColor, sliceFrac * 0.9);
+        const sliceOpacity = opacity * (0.35 + 0.65 * sliceFrac);
+        const diagPattern = getDiagPattern(ctx, sliceColor, hatchStyle, glyphDensity);
 
-      if (presetRes.visibleCharCount < lineStart) {
+        ctx.save();
+        ctx.globalAlpha = sliceOpacity;
+
+        for (let li = 0; li < lines.length; li++) {
+          const lineText = lines[li];
+          if (!lineText) continue;
+
+          const lineY = scrollY + li * lineHeight;
+          const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ + sliceDepth);
+          if (ptCenter.z <= -cameraZ + 1) continue;
+
+          const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
+          if (proj.scale <= 0) continue;
+
+          // Viewport frustum culling
+          if (proj.y < -200 || proj.y > height + 200) continue;
+
+          const renderedSize = Math.max(1, fontSize * proj.scale);
+          ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+
+          let currentX = proj.x;
+          const lineMetrics = ctx.measureText(lineText).width;
+          if (textAlign === 'center') currentX -= lineMetrics / 2;
+          else if (textAlign === 'right') currentX -= lineMetrics;
+
+          ctx.fillStyle = diagPattern || sliceColor;
+          ctx.fillText(lineText, currentX, proj.y);
+
+          ctx.strokeStyle = sliceColor;
+          ctx.lineWidth = 1;
+          ctx.strokeText(lineText, currentX, proj.y);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // Front Face for Long Text
+    ctx.save();
+    ctx.globalAlpha = opacity;
+
+    for (let li = 0; li < lines.length; li++) {
+      let lineText = lines[li];
+      if (!lineText) continue;
+
+      const lineY = scrollY + li * lineHeight;
+      const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ);
+      if (ptCenter.z <= -cameraZ + 1) continue;
+
+      const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
+      if (proj.scale <= 0) continue;
+
+      if (proj.y < -200 || proj.y > height + 200) {
+        charCounter += lineText.length;
         continue;
-      } else if (presetRes.visibleCharCount < lineEnd) {
-        const charsInLine = presetRes.visibleCharCount - lineStart;
-        lineText = lineText.slice(0, charsInLine) + (presetRes.cursor || '');
+      }
+
+      if (hasCharReveal) {
+        const lineStart = charCounter;
+        const lineEnd = charCounter + lineText.length;
+        charCounter = lineEnd;
+
+        if (presetRes.visibleCharCount < lineStart) {
+          continue;
+        } else if (presetRes.visibleCharCount < lineEnd) {
+          const charsInLine = presetRes.visibleCharCount - lineStart;
+          lineText = lineText.slice(0, charsInLine) + (presetRes.cursor || '');
+        }
+      }
+
+      const renderedSize = Math.max(1, fontSize * proj.scale);
+      ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+
+      let currentX = proj.x;
+      const lineMetrics = ctx.measureText(lineText).width;
+      if (textAlign === 'center') currentX -= lineMetrics / 2;
+      else if (textAlign === 'right') currentX -= lineMetrics;
+
+      ctx.fillStyle = hashPattern || litFrontColor;
+      ctx.fillText(lineText, currentX, proj.y);
+
+      if (isWireframe) {
+        ctx.strokeStyle = wireframeColor;
+        ctx.lineWidth = outlineWidth;
+        ctx.strokeText(lineText, currentX, proj.y);
       }
     }
 
-    const renderedSize = Math.max(1, fontSize * proj.scale);
-    ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
-
-    if (frontLight > 0.7) {
-      ctx.shadowColor = highlightColor;
-      ctx.shadowBlur = Math.round(8 * proj.scale);
-    } else {
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-    }
-
-    let currentX = proj.x;
-    const lineMetrics = ctx.measureText(lineText).width;
-    if (textAlign === 'center') currentX -= lineMetrics / 2;
-    else if (textAlign === 'right') currentX -= lineMetrics;
-
-    ctx.fillText(lineText, currentX, proj.y);
+    ctx.restore();
   }
-  ctx.restore();
 
   // ─── 3. CRT Scanlines Pass ───────────────────────────────────────────────
   if (layer.scanlines && (presetRes.lighting.scanlineIntensity || layer.scanlineIntensity)) {
@@ -480,6 +618,7 @@ function applyBloom(ctx, canvas, width, height, intensity, radius, glowColor) {
   const h = height || canvas.height || 1080;
 
   const { canvas: bCanvas, ctx: bCtx } = getBloomCanvas(Math.round(w / 2), Math.round(h / 2));
+  if (!bCanvas || !bCtx) return;
   bCtx.clearRect(0, 0, bCanvas.width, bCanvas.height);
 
   // Downsample
@@ -510,6 +649,7 @@ function applyChromaticGlitch(ctx, canvas, width, height, glitchIntensity) {
   const h = height || canvas.height || 1080;
 
   const { canvas: gCanvas, ctx: gCtx } = getGlitchCanvas(w, h);
+  if (!gCanvas || !gCtx) return;
   gCtx.clearRect(0, 0, w, h);
   gCtx.drawImage(canvas, 0, 0);
 

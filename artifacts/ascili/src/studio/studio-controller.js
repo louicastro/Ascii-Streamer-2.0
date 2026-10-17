@@ -243,65 +243,62 @@ export class StudioController {
             </div>
           </div>
 
-          <!-- ASCII Character Set & Stream Engine -->
+          <!-- 3D ASCII Hatching, Patterns & Wireframe Material -->
           <div class="studio-section">
             <div class="studio-section-title">
-              <span>ASCII CHARACTER SET & ENGINE</span>
-              <span class="studio-val-badge" style="color:#39ff52;">VIDEO STREAM</span>
+              <span>3D ASCII HATCHING & MATERIAL</span>
+              <span class="studio-val-badge" style="color:#00ffff;">ISOMETRIC</span>
             </div>
+
+            <label class="studio-label">Front Face ASCII Glyph</label>
+            <select class="studio-select" id="studioFrontGlyph">
+              <option value="#" selected># (Dense Grid - Reference Style)</option>
+              <option value="@">@ (Heavy Block Density)</option>
+              <option value="%">% (Tech ASCII Matrix)</option>
+              <option value="*">* (Starfield Cross)</option>
+              <option value="&">&amp; (Amper Typography)</option>
+              <option value="8">8 (Digital Voxel)</option>
+              <option value="0">0 (Cyber Matrix)</option>
+              <option value="+">+ (Wireframe Plus)</option>
+              <option value=".">. (Sparse Dot Grid)</option>
+              <option value="custom">Custom Glyph...</option>
+            </select>
+
+            <div id="studioCustomGlyphWrap" style="display:none; margin-bottom:8px;">
+              <input type="text" class="studio-input" id="studioCustomGlyph" placeholder="Enter custom character, e.g. #" maxlength="3" style="width:100%; margin-bottom:0;" />
+            </div>
+
+            <label class="studio-label">Glyph Pattern Density</label>
+            <select class="studio-select" id="studioGlyphDensity">
+              <option value="fine">Fine (High Resolution)</option>
+              <option value="medium" selected>Medium (Optimal Contrast)</option>
+              <option value="coarse">Coarse (Chunky Retro)</option>
+            </select>
+
+            <label class="studio-label">Extrusion Hatching Style</label>
+            <select class="studio-select" id="studioHatchStyle">
+              <option value="diag" selected>Diagonal Hatching ( / / / )</option>
+              <option value="diagReverse">Reverse Diagonal ( \ \ \ )</option>
+              <option value="cross">Cross Hatching ( X X X )</option>
+              <option value="scanline">Horizontal Scanlines ( = = = )</option>
+              <option value="none">Contour Slices Only</option>
+            </select>
 
             <label class="studio-checkbox-row">
-              <input type="checkbox" id="studioAsciiEngineCheck" checked />
-              <span>Enable ASCII Stream Engine</span>
+              <input type="checkbox" id="studioWireframeCheck" checked />
+              <span>Crisp Wireframe Outlines</span>
             </label>
-
-            <label class="studio-label">Character Set</label>
-            <select class="studio-select" id="studioCharSet">
-              <option value="standard">Standard ( .:-=+*#%@ )</option>
-              <option value="extended">Extended 70-Glyph ( ASCII Detail )</option>
-              <option value="block">Block Density ( ░▒▓█ )</option>
-              <option value="matrix">Matrix Terminal ( .:=+*#MW&8%B@$ )</option>
-              <option value="braille">Braille Matrix ( ⠁⠂⠃⠄... )</option>
-              <option value="minimal">Minimal Mono ( .oO0 )</option>
-              <option value="custom">Custom Characters...</option>
-            </select>
-
-            <div id="studioCustomCharWrap" style="display:none; margin-bottom:8px;">
-              <input type="text" class="studio-input" id="studioCustomChars" placeholder="e.g.  .:=*#%@" style="width:100%; margin-bottom:0;" />
-            </div>
-
-            <label class="studio-label">Color Mode</label>
-            <select class="studio-select" id="studioColorMode">
-              <option value="truecolor">Truecolor (Full 3D Colors & Glow)</option>
-              <option value="monochrome">Monochrome CRT</option>
-              <option value="grayscale">Grayscale Shading</option>
-              <option value="ansi16">Retro 16-Color ANSI</option>
-              <option value="ansi256">256-Color Extended Terminal</option>
-            </select>
 
             <div class="studio-slider-row">
-              <span class="studio-label" style="margin:0; width:70px;">Density</span>
-              <input type="range" class="studio-range" id="studioAsciiCols" min="40" max="240" step="2" value="120" />
-              <input type="number" class="studio-num-input" id="studioAsciiColsNum" value="120" />
+              <span class="studio-label" style="margin:0; width:70px;">Line Width</span>
+              <input type="range" class="studio-range" id="studioOutlineWidth" min="0.5" max="4.0" step="0.5" value="1.5" />
+              <input type="number" class="studio-num-input" id="studioOutlineWidthNum" step="0.5" value="1.5" />
             </div>
 
-            <label class="studio-label">Dithering Mode</label>
-            <select class="studio-select" id="studioDithering">
-              <option value="none">None (Crisp)</option>
-              <option value="bayer">Bayer 4×4 Ordered</option>
-              <option value="floyd">Floyd-Steinberg Error Diffusion</option>
-              <option value="atkinson">Atkinson MacPaint</option>
-            </select>
-
-            <label class="studio-checkbox-row">
-              <input type="checkbox" id="studioEdgeDetectCheck" checked />
-              <span>Directional ASCII Edge Strokes (- | / \\)</span>
-            </label>
-
-            <label class="studio-checkbox-row">
-              <input type="checkbox" id="studioInvertCharsCheck" />
-              <span>Invert Character Ramp</span>
-            </label>
+            <div class="studio-color-row">
+              <span class="studio-label" style="margin:0;">Wireframe Color</span>
+              <input type="color" class="studio-color-picker" id="studioWireframeColor" value="#ffffff" />
+            </div>
           </div>
 
           <!-- Retro CRT Scanlines & Bloom FX -->
@@ -494,54 +491,41 @@ export class StudioController {
     bindCheck('studioBloomCheck', 'bloom');
     bindCheck('studioShadowCheck', 'shadow');
 
-    // ASCII Stream Engine Controls
-    bindPair('studioAsciiCols', 'studioAsciiColsNum', 'asciiCols');
+    // 3D ASCII Hatching & Wireframe Controls
+    bindCheck('studioWireframeCheck', 'wireframe');
+    bindPair('studioOutlineWidth', 'studioOutlineWidthNum', 'outlineWidth');
+    bindColor('studioWireframeColor', 'wireframeColor');
 
-    const asciiEngineCheck = this.container.querySelector('#studioAsciiEngineCheck');
-    asciiEngineCheck?.addEventListener('change', (e) => {
-      this.selectedLayer.asciiEngineMode = e.target.checked;
-      this.comp.asciiEngineMode = e.target.checked;
+    const frontGlyphSelect = this.container.querySelector('#studioFrontGlyph');
+    const customGlyphWrap = this.container.querySelector('#studioCustomGlyphWrap');
+    const customGlyphInput = this.container.querySelector('#studioCustomGlyph');
+
+    frontGlyphSelect?.addEventListener('change', (e) => {
+      const val = e.target.value;
+      if (val === 'custom') {
+        if (customGlyphWrap) customGlyphWrap.style.display = 'block';
+        this.selectedLayer.frontGlyph = customGlyphInput?.value || '#';
+      } else {
+        if (customGlyphWrap) customGlyphWrap.style.display = 'none';
+        this.selectedLayer.frontGlyph = val;
+      }
       this._saveAutosave();
     });
 
-    const charSetSelect = this.container.querySelector('#studioCharSet');
-    const customCharWrap = this.container.querySelector('#studioCustomCharWrap');
-    const customCharInput = this.container.querySelector('#studioCustomChars');
+    customGlyphInput?.addEventListener('input', (e) => {
+      if (frontGlyphSelect?.value === 'custom') {
+        this.selectedLayer.frontGlyph = e.target.value || '#';
+        this._saveAutosave();
+      }
+    });
 
-    charSetSelect?.addEventListener('change', (e) => {
-      this.selectedLayer.charSet = e.target.value;
-      this.comp.charSet = e.target.value;
-      if (customCharWrap) customCharWrap.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    this.container.querySelector('#studioGlyphDensity')?.addEventListener('change', (e) => {
+      this.selectedLayer.glyphDensity = e.target.value;
       this._saveAutosave();
     });
 
-    customCharInput?.addEventListener('input', (e) => {
-      this.selectedLayer.customChars = e.target.value;
-      this.comp.customChars = e.target.value;
-      this._saveAutosave();
-    });
-
-    this.container.querySelector('#studioColorMode')?.addEventListener('change', (e) => {
-      this.selectedLayer.colorMode = e.target.value;
-      this.comp.colorMode = e.target.value;
-      this._saveAutosave();
-    });
-
-    this.container.querySelector('#studioDithering')?.addEventListener('change', (e) => {
-      this.selectedLayer.dithering = e.target.value;
-      this.comp.dithering = e.target.value;
-      this._saveAutosave();
-    });
-
-    this.container.querySelector('#studioEdgeDetectCheck')?.addEventListener('change', (e) => {
-      this.selectedLayer.enableEdgeDetection = e.target.checked;
-      this.comp.enableEdgeDetection = e.target.checked;
-      this._saveAutosave();
-    });
-
-    this.container.querySelector('#studioInvertCharsCheck')?.addEventListener('change', (e) => {
-      this.selectedLayer.invertChars = e.target.checked;
-      this.comp.invertChars = e.target.checked;
+    this.container.querySelector('#studioHatchStyle')?.addEventListener('change', (e) => {
+      this.selectedLayer.hatchStyle = e.target.value;
       this._saveAutosave();
     });
 
@@ -767,30 +751,41 @@ export class StudioController {
     this.container.querySelector('#studioBloomCheck').checked = layer.bloom ?? true;
     this.container.querySelector('#studioShadowCheck').checked = layer.shadow ?? true;
 
-    // ASCII Stream Engine values
-    const asciiEngineCheck = this.container.querySelector('#studioAsciiEngineCheck');
-    if (asciiEngineCheck) asciiEngineCheck.checked = layer.asciiEngineMode ?? (this.comp.asciiEngineMode ?? true);
+    // 3D ASCII Hatching & Material values
+    const wireframeCheck = this.container.querySelector('#studioWireframeCheck');
+    if (wireframeCheck) wireframeCheck.checked = layer.wireframe !== false;
 
-    const charSetSelect = this.container.querySelector('#studioCharSet');
-    if (charSetSelect) charSetSelect.value = layer.charSet || this.comp.charSet || 'standard';
+    const outlineWidth = layer.outlineWidth ?? 1.5;
+    const outlineRange = this.container.querySelector('#studioOutlineWidth');
+    const outlineNum = this.container.querySelector('#studioOutlineWidthNum');
+    if (outlineRange) outlineRange.value = outlineWidth;
+    if (outlineNum) outlineNum.value = outlineWidth;
 
-    const customCharWrap = this.container.querySelector('#studioCustomCharWrap');
-    if (customCharWrap) customCharWrap.style.display = (charSetSelect?.value === 'custom') ? 'block' : 'none';
+    const wireColor = this.container.querySelector('#studioWireframeColor');
+    if (wireColor) wireColor.value = layer.wireframeColor || '#ffffff';
 
-    const customCharInput = this.container.querySelector('#studioCustomChars');
-    if (customCharInput) customCharInput.value = layer.customChars || this.comp.customChars || '';
+    const frontGlyphSelect = this.container.querySelector('#studioFrontGlyph');
+    const customGlyphWrap = this.container.querySelector('#studioCustomGlyphWrap');
+    const customGlyphInput = this.container.querySelector('#studioCustomGlyph');
+    const currentGlyph = layer.frontGlyph || '#';
+    const isStandardGlyph = ['#', '@', '%', '*', '&', '8', '0', '+', '.'].includes(currentGlyph);
 
-    const colorModeSelect = this.container.querySelector('#studioColorMode');
-    if (colorModeSelect) colorModeSelect.value = layer.colorMode || this.comp.colorMode || 'truecolor';
+    if (frontGlyphSelect) {
+      if (isStandardGlyph) {
+        frontGlyphSelect.value = currentGlyph;
+        if (customGlyphWrap) customGlyphWrap.style.display = 'none';
+      } else {
+        frontGlyphSelect.value = 'custom';
+        if (customGlyphWrap) customGlyphWrap.style.display = 'block';
+        if (customGlyphInput) customGlyphInput.value = currentGlyph;
+      }
+    }
 
-    const ditheringSelect = this.container.querySelector('#studioDithering');
-    if (ditheringSelect) ditheringSelect.value = layer.dithering || this.comp.dithering || 'none';
+    const densitySelect = this.container.querySelector('#studioGlyphDensity');
+    if (densitySelect) densitySelect.value = layer.glyphDensity || 'medium';
 
-    const edgeCheck = this.container.querySelector('#studioEdgeDetectCheck');
-    if (edgeCheck) edgeCheck.checked = layer.enableEdgeDetection ?? (this.comp.enableEdgeDetection ?? true);
-
-    const invertCheck = this.container.querySelector('#studioInvertCharsCheck');
-    if (invertCheck) invertCheck.checked = Boolean(layer.invertChars ?? this.comp.invertChars);
+    const hatchSelect = this.container.querySelector('#studioHatchStyle');
+    if (hatchSelect) hatchSelect.value = layer.hatchStyle || 'diag';
 
     // Presets active class
     const presetGrid = this.container.querySelector('#studioPresetGrid');

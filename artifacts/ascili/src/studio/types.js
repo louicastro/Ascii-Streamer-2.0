@@ -73,7 +73,7 @@ export const FONT_OPTIONS = [
   { label: 'System Monospace', value: "monospace" },
 ];
 
-export function createDefaultLayer(id = 'layer-1', text = 'ASCII 3D STUDIO', startTime = 0, duration = 5) {
+export function createDefaultLayer(id = 'layer-1', text = 'HELLO', startTime = 0, duration = 5) {
   return {
     id,
     name: text.slice(0, 18) || 'Text Layer',
@@ -84,38 +84,35 @@ export function createDefaultLayer(id = 'layer-1', text = 'ASCII 3D STUDIO', sta
     duration,
 
     // Typography
-    fontFamily: "'JetBrains Mono', 'Courier New', monospace",
-    fontSize: 58,
+    fontFamily: "'JetBrains Mono', 'Impact', monospace",
+    fontSize: 90,
     fontWeight: 'bold',
     lineHeight: 1.25,
-    letterSpacing: 3,
+    letterSpacing: 4,
     textAlign: 'center',
 
-    // 3D Transform
+    // 3D Transform (tilted to match 3D isometric perspective reference)
     posX: 0,
     posY: 0,
     posZ: 0,
     rotX: 18,    // degrees Pitch
     rotY: -22,   // degrees Yaw
-    rotZ: 0,     // degrees Roll
+    rotZ: 2,     // degrees Roll
     scale: 1.0,
 
     // Extrusion & Depth
-    depth: 36,           // depth extrusion extent in 3D units
-    slices: 14,          // number of geometric slices along the depth axis
+    depth: 42,           // depth extrusion extent in 3D units
+    slices: 16,          // number of geometric slices along the depth axis
     perspective: 750,    // focal perspective FOV distance
     cameraZ: 0,          // camera distance offset
 
-    // Shading & Material
-    charSet: 'standard', // 'standard', 'extended', 'block', 'minimal', 'braille', 'matrix', 'custom'
-    customChars: '',
-    invertChars: false,
-    colorMode: 'truecolor', // 'truecolor', 'monochrome', 'grayscale', 'ansi16', 'ansi256'
-    asciiCols: 120,      // ASCII matrix columns
-    dithering: 'none',   // 'none', 'bayer', 'floyd', 'atkinson'
-    enableEdgeDetection: true,
-    asciiEngineMode: true, // Render with authentic ASCII stream engine
-    charDensity: 1.0,    // grid cell density multiplier
+    // 3D ASCII Hatching & Wireframe Material
+    frontGlyph: '#',     // '#', '@', '%', '&', '*', '8', '0', '+', '.', or custom
+    glyphDensity: 'medium', // 'fine', 'medium', 'coarse'
+    hatchStyle: 'diag',  // 'diag' (/), 'diagReverse' (\), 'cross' (X), 'scanline' (=), 'none'
+    wireframe: true,     // crisp CAD/blueprint contour wireframe outlines
+    outlineWidth: 1.5,   // outline stroke width in px
+    wireframeColor: '#ffffff',
     frontColor: '#ffffff',
     extrudeColor: '#3a7bd5',
     highlightColor: '#00ffff',
@@ -153,7 +150,7 @@ export function createDefaultLayer(id = 'layer-1', text = 'ASCII 3D STUDIO', sta
 }
 
 export function createDefaultComposition() {
-  const defaultLayer = createDefaultLayer('layer-1', 'ASCII 3D STUDIO', 0, 5);
+  const defaultLayer = createDefaultLayer('layer-1', 'HELLO', 0, 5);
   return {
     id: 'comp-' + Date.now(),
     name: '3D ASCII Motion Graphics',
@@ -162,12 +159,6 @@ export function createDefaultComposition() {
     aspectRatio: '16:9',
     width: 1920,
     height: 1080,
-    charSet: 'standard',
-    colorMode: 'truecolor',
-    asciiCols: 120,
-    dithering: 'none',
-    enableEdgeDetection: true,
-    asciiEngineMode: true,
     layers: [defaultLayer],
     selectedLayerId: defaultLayer.id,
     currentTime: 0.0,
