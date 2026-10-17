@@ -749,19 +749,15 @@ export class AsciliVideoExporter {
     const startPlayback = async () => {
       if (!this._running) return;
       try {
-        if (Math.abs(videoEl.currentTime) >= 0.001) {
-          await new Promise((resolve, reject) => {
+        if (videoEl.currentTime > 0.05) {
+          await new Promise((resolve) => {
             const finishSeek = () => {
               clearTimeout(timeout);
               videoEl.removeEventListener('seeked', onSeeked);
               cancelSeek = null;
               resolve();
             };
-            const timeout = setTimeout(() => {
-              videoEl.removeEventListener('seeked', onSeeked);
-              cancelSeek = null;
-              reject(new Error('Timed out while returning to the start of the source video.'));
-            }, 10000);
+            const timeout = setTimeout(finishSeek, 2000);
             const onSeeked = finishSeek;
             cancelSeek = finishSeek;
             videoEl.addEventListener('seeked', onSeeked, { once: true });
@@ -1085,8 +1081,10 @@ export class AsciliSrtExporter {
 
     if (isYtt) {
       const monoClean = monoColor.startsWith('#') ? monoColor : `#${monoColor}`;
-      const yttSz = Math.max(0, Math.min(100, Math.round((Math.min(10, Math.max(1, cfg.fontSize || 1)) - 1) * 11)));
-      const penLines = [];
+      const yttSz = Math.max(75, Math.min(100, Math.round((cfg.fontSize || 10) * 10)));
+      const penLines = [
+        '  <pen id="0" sz="100" fc="#000000" fo="0" bo="0"/>'
+      ];
       if (colorMode === 'monochrome') {
         penLines.push(`  <pen id="1" fs="3" sz="${yttSz}" fc="${monoClean}" fo="254" bo="0"/>`);
       } else {
@@ -1100,9 +1098,11 @@ export class AsciliSrtExporter {
         '<?xml version="1.0" encoding="utf-8" ?>',
         '<timedtext format="3">',
         '<head>',
+        '  <wp id="0" ap="7" ah="0" av="0"/>',
+        '  <wp id="1" ap="0" ah="0" av="0"/>',
+        '  <ws id="0" ju="0" pd="0" sd="0" wfo="0"/>',
+        '  <ws id="1" ju="0" pd="0" sd="0" wfo="0"/>',
         penLines.join('\n'),
-        `  <wp id="1" ap="0" ah="0" av="0" rc="${rows}" cc="${cols}"/>`,
-        '  <ws id="1" mh="2" ju="0"/>',
         '</head>',
         '<body>',
         ''
@@ -1148,7 +1148,7 @@ export class AsciliSrtExporter {
     const escapeText = character => character.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const escapeAss = character => character === '{' ? '(' : character === '}' ? ')' : character === '\\' ? '/' : character;
     const escapeYoutube = character => character === ' ' ? '\u00A0' : (character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;' : character);
-    const escapeXmlChar = character => character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;' : character === '"' ? '&quot;' : character === "'" ? '&apos;' : character;
+    const escapeXmlChar = character => character === ' ' ? '&#160;' : (character === '&' ? '&amp;' : character === '<' ? '&lt;' : character === '>' ? '&gt;' : character === '"' ? '&quot;' : character === "'" ? '&apos;' : character);
     const safeChars = isAss ? charset.map(escapeAss) : isYtt ? charset.map(escapeXmlChar) : isYoutube ? charset.map(escapeYoutube) : charset.map(escapeText);
 
     // Precompute adjustment LUT for brightness, contrast, and gamma
@@ -1204,11 +1204,11 @@ export class AsciliSrtExporter {
               const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
               let charIndex = Math.round(luminance * lastChar);
               if (invert) charIndex = lastChar - charIndex;
-              lineStr += safeChars[charIndex] || ' ';
+              lineStr += safeChars[charIndex] || '&#160;';
             }
             lines[row] = lineStr;
           }
-          return lines.join('&#10;');
+          return lines.join('\n');
         }
 
         // Color YTT: group adjacent characters with matching penId into <s p="ID"> runs
@@ -1219,7 +1219,7 @@ export class AsciliSrtExporter {
 
         for (let row = 0; row < rows; row++) {
           if (row > 0) {
-            runText += '&#10;';
+            runText += '\n';
           }
           const rowOffset = row * cols * 4;
           for (let col = 0; col < cols; col++) {
@@ -1253,13 +1253,14 @@ export class AsciliSrtExporter {
                 spanR = red; spanG = green; spanB = blue;
               }
             }
-            runText += safeChars[charIndex] || ' ';
+            runText += safeChars[charIndex] || '&#160;';
           }
         }
         if (runPenId !== -1 && runText.length > 0) {
           runs.push(`<s p="${runPenId}">${runText}</s>`);
         }
-        return runs.length > 0 ? runs.join('') : '<s p="1"> </s>';
+        if (runs.length === 0) return '<s p="1">&#160;</s>';
+        return '\u200B' + runs.join('');
       }
 
       if (isYoutube) {
@@ -1412,15 +1413,16 @@ export class AsciliSrtExporter {
 
     const queueCue = (text, start, end) => {
       const safeEnd = Math.max(end, start + 0.04);
-      const safeText = text.trim().length === 0 ? ' ' : text;
+      const safeText = text.trim().length === 0 ? '&#160;' : text;
       let cue;
       if (isYtt) {
-        const startMs = Math.round(start * 1000);
+        const startMs = Math.max(1, Math.round(start * 1000));
         const durMs = Math.max(1, Math.round((safeEnd - start) * 1000));
         const bodyContent = colorMode === 'monochrome' ? `<s p="1">${safeText}</s>` : safeText;
-        cue = `  <p t="${startMs}" d="${durMs}" wp="1">${bodyContent}</p>\n`;
+        cue = `  <p t="${startMs}" d="${durMs}" wp="1" ws="1">${bodyContent}</p>\n`;
         // Strictly prevent exceeding 20 MB ceiling (reserve 4096 bytes for closing tags)
         if (currentYttBytes + cue.length + 4096 >= YTT_MAX_BYTES) {
+          finish();
           return;
         }
         currentYttBytes += cue.length;
@@ -1584,25 +1586,17 @@ export class AsciliSrtExporter {
     const startPlayback = async () => {
       if (!this._running) return;
       try {
-        if (Math.abs(videoEl.currentTime) >= 0.001) {
-          await new Promise((resolve, reject) => {
-            const onSeeked = () => {
+        if (videoEl.currentTime > 0.05) {
+          await new Promise((resolve) => {
+            const finishSeek = () => {
               clearTimeout(timeout);
               videoEl.removeEventListener('seeked', onSeeked);
               cancelSeek = null;
               resolve();
             };
-            const timeout = setTimeout(() => {
-              videoEl.removeEventListener('seeked', onSeeked);
-              cancelSeek = null;
-              reject(new Error('Timed out while returning to the start of the source video.'));
-            }, 10000);
-            cancelSeek = () => {
-              clearTimeout(timeout);
-              videoEl.removeEventListener('seeked', onSeeked);
-              cancelSeek = null;
-              resolve();
-            };
+            const timeout = setTimeout(finishSeek, 2000);
+            const onSeeked = finishSeek;
+            cancelSeek = finishSeek;
             videoEl.addEventListener('seeked', onSeeked, { once: true });
             videoEl.currentTime = 0;
           });

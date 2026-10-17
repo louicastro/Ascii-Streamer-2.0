@@ -1475,8 +1475,10 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
   const isYoutube = format === 'youtube';
   const isAss = format === 'ass';
   const maxLimit = isAss ? 160 : isYtt ? 100 : isYoutube ? 32 : SRT_MAX_COLS;
-  const srtCols = Math.min(maxLimit, cols);
-  const rows = isYoutube ? 4 : Math.max(1, Math.round(srtCols * (videoHeight / videoWidth) * 0.45));
+  const srtCols = Math.min(maxLimit, cols || 80);
+  const vw = videoWidth || 640;
+  const vh = videoHeight || 480;
+  const rows = isYoutube ? 4 : Math.max(1, Math.round(srtCols * (vh / vw) * 0.45));
   const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
   const bytesPerChar = chars.reduce((max, char) => {
     const cp = char.codePointAt(0);
@@ -1497,8 +1499,7 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
 function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 15, format = 'srt') {
   const isYtt = format === 'ytt';
   if (isYtt) {
-    const target = (requestedCols && requestedCols >= 60) ? Math.min(100, Math.round(requestedCols)) : 80;
-    return target;
+    return requestedCols ? Math.min(100, Math.max(20, Math.round(requestedCols))) : 80;
   }
   const isYoutube = format === 'youtube';
   if (isYoutube) return Math.min(32, Math.max(16, requestedCols && requestedCols < 32 ? requestedCols : 30));
@@ -1650,7 +1651,7 @@ async function chooseVideoFile(mimeType, suggestedName) {
     ? 'SubRip Subtitles (.srt)'
     : 'Rendered video';
   const acceptMap = isYtt
-    ? { 'application/xml': ['.xml', '.ytt'], 'text/plain': ['.ytt', '.txt'] }
+    ? { 'application/octet-stream': ['.ytt'], 'text/plain': ['.ytt', '.txt'] }
     : isAss
     ? { 'text/plain': ['.ass', '.txt'], 'text/x-ssa': ['.ass', '.ssa'] }
     : isVtt
