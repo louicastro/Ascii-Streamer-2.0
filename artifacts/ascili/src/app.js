@@ -2027,25 +2027,7 @@ cvStart.addEventListener('click', async () => {
     : isGif
     ? `ascili-animated-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.gif`
     : `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
-  let writable = null;
-  let temporaryExport = null;
 
-  if (typeof window.showSaveFilePicker === 'function') {
-    try {
-      writable = await chooseVideoFile(mimeType, filename);
-      if (writable === false) return; // User cancelled picker
-    } catch {
-      writable = null;
-    }
-  }
-
-  if (!writable) {
-    temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
-    if (temporaryExport) {
-      writable = temporaryExport.writable;
-      showToast(`Exporting at ${targetFps} FPS; click Download when complete.`);
-    }
-  }
   cvProgressSection.style.display = 'block';
   if (cvPreviewSection) cvPreviewSection.style.display = 'block';
   if (cvPreviewBadge) cvPreviewBadge.textContent = 'ENCODING PREVIEW';
@@ -2078,7 +2060,6 @@ cvStart.addEventListener('click', async () => {
       targetFps,
       format: isYtt ? 'ytt' : isYoutube ? 'youtube' : isAss ? 'ass' : isVtt ? 'vtt' : 'srt',
       speed: subtitleSpeed,
-      writable,
       onProgress(pct, _elapsed, _eta, frameNum, frameTotal) {
         cvCurrentProgress = pct;
         cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${frameTotal.toLocaleString()} frames`;
@@ -2097,20 +2078,13 @@ cvStart.addEventListener('click', async () => {
       async onComplete(blob, resultMime, result) {
         cvStopProgressClock();
         if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
-        if (temporaryExport) {
-          try {
-            await temporaryExport.prepareDownload();
-            cvTemporaryExport = temporaryExport;
-          } catch (error) {
-            temporaryExport.cleanup();
-            cvShowExportError('Could not prepare the temporary subtitle file for download: ' + (error?.message || error));
-            return;
-          }
-        }
         cvBlob = blob;
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
-        cvSave.style.display = temporaryExport || !result?.savedToDisk ? '' : 'none';
+        cvSave.style.display = '';
+        if (saveLabel) {
+          saveLabel.textContent = isYtt ? 'Download .ytt' : isAss ? 'Download ASS' : 'Download Subtitles';
+        }
         cvConvertAnother.style.display = '';
         cvProgressFill.style.width = '100%';
         cvProgressPct.textContent = '100%';
@@ -2119,15 +2093,14 @@ cvStart.addEventListener('click', async () => {
         cvProgressFrames.textContent = `${totalFrames.toLocaleString()} / ${totalFrames.toLocaleString()} frames`;
         cvProgressSection.querySelector('.cv-section-label').textContent = `${labelPrefix} EXPORT COMPLETE`;
         cvDoneSection.style.display = 'flex';
-        const formatName = isYtt ? 'YouTube Timed Text' : isYoutube ? 'YouTube Captions' : isAss ? 'ASS' : isVtt ? 'WebVTT' : 'SRT';
+        const formatName = isYtt ? 'YouTube Timed Text (.ytt)' : isYoutube ? 'YouTube Captions' : isAss ? 'ASS' : isVtt ? 'WebVTT' : 'SRT';
         const colsDisplay = result?.cols || exportCols;
         const fontNote = isYtt ? `  ·  font ${cfg.fontSize || 1}` : isYoutube ? '  ·  plain text' : isAss ? '  ·  9px font' : '';
-        cvDoneMeta.textContent = temporaryExport
-          ? `${fmtBytes(estimatedOutputBytes)}  ·  ${formatName} ready to download  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`
-          : result?.savedToDisk
-          ? `Saved to selected file  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`
-          : `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`;
-        showToast(temporaryExport ? `${formatName} ready to download` : result?.savedToDisk ? `${formatName} saved to file` : `${formatName} ready to download`);
+        cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`;
+        showToast(isYtt ? 'YouTube Timed Text (.ytt) ready to download' : `${formatName} ready to download`);
+        try {
+          if (blob) download(filename, blob, resultMime);
+        } catch {}
       },
       onError(message) {
         if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
@@ -2237,21 +2210,14 @@ cvStart.addEventListener('click', async () => {
     async onComplete(blob, mimeType, result) {
       cvStopProgressClock();
       if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
-      if (temporaryExport) {
-        try {
-          await temporaryExport.prepareDownload();
-          cvTemporaryExport = temporaryExport;
-        } catch (error) {
-          temporaryExport.cleanup();
-          cvShowExportError('Could not prepare the temporary video file for download: ' + (error?.message || error));
-          return;
-        }
-      }
       cvBlob     = blob;
       cvMimeType = mimeType;
 
       cvStop.style.display           = 'none';
-      cvSave.style.display           = temporaryExport || !result?.savedToDisk ? '' : 'none';
+      cvSave.style.display           = '';
+      if (saveLabel) {
+        saveLabel.textContent = 'Download Video';
+      }
       cvConvertAnother.style.display = '';
       cvProgressFill.style.width     = '100%';
       cvProgressPct.textContent      = '100%';
@@ -2261,12 +2227,11 @@ cvStart.addEventListener('click', async () => {
 
       cvDoneSection.style.display = 'flex';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      cvDoneMeta.textContent = temporaryExport
-        ? `${fmtBytes(estimatedOutputBytes)}  ·  ${ext.toUpperCase()} ready to download  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
-        : result?.savedToDisk
-        ? `Saved to selected file  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`
-        : `${fmtBytes(blob.size)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
-      showToast(temporaryExport ? 'Video ready to download' : result?.savedToDisk ? 'Conversion saved to file' : 'Conversion ready to download');
+      cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
+      showToast('Video conversion ready! Click Download Video.');
+      try {
+        if (blob) download(filename, blob, mimeType);
+      } catch {}
     },
     onError(msg) {
       if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
@@ -2299,12 +2264,15 @@ cvSave.addEventListener('click', () => {
     try {
       cvTemporaryExport.download();
       showToast('Download started');
+      return;
     } catch (error) {
       cvShowExportError(error?.message || error);
     }
+  }
+  if (!cvBlob) {
+    showToast('Export file is not available to download. Please retry export.');
     return;
   }
-  if (!cvBlob) return;
   const isGif = cvExportType?.value === 'gif' || cvMimeType.includes('gif');
   const ext = (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : isGif ? 'gif' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');

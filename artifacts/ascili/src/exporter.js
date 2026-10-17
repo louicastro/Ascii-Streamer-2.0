@@ -429,41 +429,32 @@ export class AsciliVideoExporter {
       return;
     }
 
-    // Detect if requestFrame is available (Chromium) — fallback for Firefox/Safari
+    // Create stream at target FPS for stable encoder timestamps
     let stream;
     try {
-      stream = this._canvas.captureStream(0);
+      stream = this._canvas.captureStream(targetFpsVal);
     } catch (e) {
-      this._writable?.abort().catch(() => {});
-      this._writable = null;
-      onError?.('captureStream not supported: ' + e.message); return;
+      try {
+        stream = this._canvas.captureStream();
+      } catch (e2) {
+        this._writable?.abort().catch(() => {});
+        this._writable = null;
+        onError?.('captureStream not supported: ' + (e2?.message || e.message));
+        return;
+      }
     }
 
     const videoTrack = stream.getVideoTracks()[0];
     const hasRequestFrame = typeof videoTrack?.requestFrame === 'function';
 
-    // If requestFrame is not available, use fps-based captureStream instead
-    if (!hasRequestFrame) {
+    // Only attach audio if the source video has unmuted, active sound (muted tracks stall MediaRecorder)
+    if (!videoEl.muted && videoEl.volume > 0) {
       try {
-        stream?.getTracks().forEach(track => track.stop());
-        stream = this._canvas.captureStream(targetFpsVal);
-      } catch (e) {
-        this._writable?.abort().catch(() => {});
-        this._writable = null;
-        onError?.('captureStream not supported: ' + e.message); return;
-      }
+        const sourceStream = videoEl.captureStream ? videoEl.captureStream() : (videoEl.mozCaptureStream ? videoEl.mozCaptureStream() : null);
+        const audioTracks = sourceStream?.getAudioTracks() || [];
+        if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
+      } catch {}
     }
-
-    // Capture audio tracks from source video (cloned so export never terminates source playback)
-    try {
-      if (videoEl.captureStream) {
-        const audioTracks = videoEl.captureStream().getAudioTracks();
-        if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
-      } else if (videoEl.mozCaptureStream) {
-        const audioTracks = videoEl.mozCaptureStream().getAudioTracks();
-        if (audioTracks.length > 0) stream.addTrack(audioTracks[0].clone());
-      }
-    } catch {}
 
     this._chunks  = [];
     this._running = true;
@@ -545,6 +536,8 @@ export class AsciliVideoExporter {
 
     this._recorder.ondataavailable = e => {
       if (!e.data || e.data.size === 0) return;
+      this._bufferedBytes += e.data.size;
+      this._chunks.push(e.data);
       if (this._writable) {
         const chunk = e.data;
         this._pendingWriteBytes += chunk.size;
@@ -561,10 +554,7 @@ export class AsciliVideoExporter {
             this._recorder.resume();
           }
         });
-        return;
       }
-      this._bufferedBytes += e.data.size;
-      this._chunks.push(e.data);
     };
 
     this._recorder.onpause = () => videoEl.pause();
@@ -606,20 +596,15 @@ export class AsciliVideoExporter {
           await this._writeChain;
           await this._writable.close();
           this._writable = null;
-          this._running = false;
-          onComplete?.(null, this._mimeType, { savedToDisk: true });
         } catch (error) {
-          this._running = false;
           try { await this._writable?.abort(); } catch {}
           this._writable = null;
-          onError?.('Could not finish video file: ' + error.message);
         }
-        return;
       }
-      const blob = new Blob(this._chunks, { type: this._mimeType });
+      const blob = this._chunks.length > 0 ? new Blob(this._chunks, { type: this._mimeType }) : null;
       this._running = false;
       this._chunks  = [];
-      onComplete?.(blob, this._mimeType);
+      onComplete?.(blob, this._mimeType, { savedToDisk: Boolean(this._writable && !blob) });
     };
 
     this._recorder.onerror = e => {
@@ -749,7 +734,9 @@ export class AsciliVideoExporter {
     const startPlayback = async () => {
       if (!this._running) return;
       try {
-        if (videoEl.currentTime > 0.05) {
+        videoEl.muted = true;
+        videoEl.defaultMuted = true;
+        if (videoEl.currentTime > 0 || videoEl.ended) {
           await new Promise((resolve) => {
             const finishSeek = () => {
               clearTimeout(timeout);
@@ -757,11 +744,11 @@ export class AsciliVideoExporter {
               cancelSeek = null;
               resolve();
             };
-            const timeout = setTimeout(finishSeek, 2000);
+            const timeout = setTimeout(finishSeek, 1500);
             const onSeeked = finishSeek;
             cancelSeek = finishSeek;
             videoEl.addEventListener('seeked', onSeeked, { once: true });
-            videoEl.currentTime = 0;
+            try { videoEl.currentTime = 0; } catch { resolve(); }
           });
         }
         if (!this._running) return;
@@ -777,9 +764,19 @@ export class AsciliVideoExporter {
       }
     };
 
+    const onVideoEnded = () => {
+      if (this._running && !finishing) {
+        finishing = true;
+        this._ticker?.stop();
+        setTimeout(() => this._finishRecording(), 100);
+      }
+    };
+    videoEl.addEventListener('ended', onVideoEnded, { once: true });
+
     this._cleanup = () => {
       this._ticker?.stop();
       this._ticker = null;
+      videoEl.removeEventListener('ended', onVideoEnded);
       cancelSeek?.();
       videoEl.pause();
     };
@@ -789,6 +786,7 @@ export class AsciliVideoExporter {
 
   /** Internal: finalize the recording gracefully. */
   _finishRecording() {
+    if (!this._running && (!this._recorder || this._recorder.state === 'inactive')) return;
     this._running = false;
     this._ticker?.stop();
     this._ticker = null;
@@ -796,7 +794,8 @@ export class AsciliVideoExporter {
     this._wakeLock = null;
     if (this._cleanup) { this._cleanup(); this._cleanup = null; }
     if (this._recorder && this._recorder.state !== 'inactive') {
-      this._recorder.stop();
+      try { this._recorder.requestData(); } catch {}
+      try { this._recorder.stop(); } catch {}
     }
   }
 
