@@ -796,6 +796,9 @@ export class StudioController {
 
   _updateAspectDimensions() {
     const key = this.comp.aspectRatio || '16:9';
+    if (this.aspectSelect && this.aspectSelect.value !== key) {
+      this.aspectSelect.value = key;
+    }
     const customWrap = this.container.querySelector('#studioCustomDimWrap');
     const customWInput = this.container.querySelector('#studioCustomW');
     const customHInput = this.container.querySelector('#studioCustomH');
@@ -829,35 +832,39 @@ export class StudioController {
 
   _initAnimationLoop() {
     const loop = (timestamp) => {
-      const dt = (timestamp - this._lastTime) / 1000;
-      this._lastTime = timestamp;
+      try {
+        const dt = (timestamp - this._lastTime) / 1000;
+        this._lastTime = timestamp;
 
-      if (this.comp.isPlaying) {
-        this.comp.currentTime += dt;
-        if (this.comp.currentTime >= this.comp.duration) {
-          if (this.comp.loop) {
-            this.comp.currentTime = 0;
-            if (this.audioEngine.isPlaying) {
-              this.audioEngine.play(0);
+        if (this.comp.isPlaying) {
+          this.comp.currentTime += dt;
+          if (this.comp.currentTime >= this.comp.duration) {
+            if (this.comp.loop) {
+              this.comp.currentTime = 0;
+              if (this.audioEngine?.isPlaying) {
+                this.audioEngine.play(0);
+              }
+            } else {
+              this.comp.currentTime = this.comp.duration;
+              this.timeline?.pause();
             }
-          } else {
-            this.comp.currentTime = this.comp.duration;
-            this.timeline?.pause();
           }
+          this.timeline?.updatePlayheadPosition();
         }
-        this.timeline?.updatePlayheadPosition();
+
+        // Calculate beat pulse if active
+        let beatPulse = 0;
+        if (this.comp.syncToBeat && this.audioEngine) {
+          beatPulse = this.audioEngine.getBeatPulse(this.comp.currentTime);
+        }
+
+        // Render frame
+        renderStudioFrame(this.comp, this.comp.currentTime, this.mainCanvas, { beatPulse });
+      } catch (err) {
+        console.error('[Ascili Studio] Animation loop frame error:', err);
+      } finally {
+        this._rafId = requestAnimationFrame(loop);
       }
-
-      // Calculate beat pulse if active
-      let beatPulse = 0;
-      if (this.comp.syncToBeat && this.audioEngine) {
-        beatPulse = this.audioEngine.getBeatPulse(this.comp.currentTime);
-      }
-
-      // Render frame
-      renderStudioFrame(this.comp, this.comp.currentTime, this.mainCanvas, { beatPulse });
-
-      this._rafId = requestAnimationFrame(loop);
     };
 
     this._rafId = requestAnimationFrame(loop);

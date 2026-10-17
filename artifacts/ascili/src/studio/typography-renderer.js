@@ -51,7 +51,7 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
   if (_charGridCache.has(cacheKey)) {
     return _charGridCache.get(cacheKey);
   }
-  if (_charGridCache.size > 250) _charGridCache.clear();
+  if (_charGridCache.size > 500) _charGridCache.clear();
 
   if (typeof document === 'undefined' || !ch || ch === ' ') {
     // Deterministic fallback grid for headless environments
@@ -74,11 +74,11 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
     return fallbackGrid;
   }
 
-  const estW = Math.max(cellW * 4, Math.round(fontSize * 1.6));
-  const estH = Math.max(cellH * 4, Math.round(fontSize * 1.6));
+  const estW = Math.max(cellW * 4, Math.round(fontSize * 1.8));
+  const estH = Math.max(cellH * 4, Math.round(fontSize * 1.8));
   const { canvas, ctx } = getMaskCanvas(estW, estH);
   if (!ctx) {
-    const emptyGrid = { cols: 1, rows: 1, cells: [], width: estW, height: estH };
+    const emptyGrid = { cols: 2, rows: 3, cells: [{ gx: 0, gy: 0, isTop: true, isBottom: true, isLeft: true, isRight: true }], width: cellW * 2, height: cellH * 3 };
     return emptyGrid;
   }
 
@@ -96,8 +96,8 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
   try {
     imgData = ctx.getImageData(0, 0, estW, estH);
   } catch {
-    const emptyGrid = { cols: 1, rows: 1, cells: [], width: estW, height: estH };
-    return emptyGrid;
+    const fallbackGrid = { cols: 2, rows: 3, cells: [{ gx: 0, gy: 0, isTop: true, isBottom: true, isLeft: true, isRight: true }], width: cellW * 2, height: cellH * 3 };
+    return fallbackGrid;
   }
 
   const pixels = imgData.data;
@@ -107,7 +107,7 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
   for (let y = 0; y < estH; y++) {
     for (let x = 0; x < estW; x++) {
       const a = pixels[(y * estW + x) * 4 + 3];
-      if (a > 60) {
+      if (a > 30) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -116,14 +116,16 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
     }
   }
 
+  // Safety fallback if font rasterization returned no alpha pixels
   if (minX > maxX || minY > maxY) {
-    const emptyGrid = { cols: 1, rows: 1, cells: [], width: cellW * 3, height: cellH * 4 };
-    _charGridCache.set(cacheKey, emptyGrid);
-    return emptyGrid;
+    minX = Math.max(0, Math.round(centerX - cellW * 1.5));
+    maxX = Math.min(estW - 1, Math.round(centerX + cellW * 1.5));
+    minY = Math.max(0, Math.round(centerY - cellH * 2));
+    maxY = Math.min(estH - 1, Math.round(centerY + cellH * 2));
   }
 
-  const boxW = (maxX - minX + 1);
-  const boxH = (maxY - minY + 1);
+  const boxW = Math.max(cellW, (maxX - minX + 1));
+  const boxH = Math.max(cellH, (maxY - minY + 1));
   const cols = Math.max(1, Math.ceil(boxW / cellW));
   const rows = Math.max(1, Math.ceil(boxH / cellH));
 
@@ -135,19 +137,32 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
 
       let sumA = 0;
       let count = 0;
+      let maxA = 0;
       for (let dy = 0; dy < cellH; dy++) {
         for (let dx = 0; dx < cellW; dx++) {
           const px = startX + dx;
           const py = startY + dy;
-          if (px < estW && py < estH) {
-            sumA += pixels[(py * estW + px) * 4 + 3];
+          if (px >= 0 && px < estW && py >= 0 && py < estH) {
+            const a = pixels[(py * estW + px) * 4 + 3];
+            sumA += a;
+            if (a > maxA) maxA = a;
             count++;
           }
         }
       }
 
       const coverage = count > 0 ? (sumA / count) : 0;
-      if (coverage > 55) {
+      // Sensitive threshold: captures thin monospace strokes and hyphens/punctuation
+      if (maxA > 30 || coverage > 10) {
+        occupied.add(`${gx},${gy}`);
+      }
+    }
+  }
+
+  // Guaranteed fallback: If no cell triggered threshold, fill all bounding cells
+  if (occupied.size === 0) {
+    for (let gy = 0; gy < rows; gy++) {
+      for (let gx = 0; gx < cols; gx++) {
         occupied.add(`${gx},${gy}`);
       }
     }
@@ -157,9 +172,13 @@ export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, 
   for (let gy = 0; gy < rows; gy++) {
     for (let gx = 0; gx < cols; gx++) {
       if (occupied.has(`${gx},${gy}`)) {
+        const cellCenterX = minX + gx * cellW + cellW / 2;
+        const cellCenterY = minY + gy * cellH + cellH / 2;
         cellGrid.push({
           gx,
           gy,
+          relX: cellCenterX - centerX,
+          relY: cellCenterY - centerY,
           isTop: !occupied.has(`${gx},${gy - 1}`),
           isBottom: !occupied.has(`${gx},${gy + 1}`),
           isLeft: !occupied.has(`${gx - 1},${gy}`),
@@ -347,70 +366,78 @@ export function getWrappedLines(ctx, text, maxWidth, fontKey) {
  * @param {object} [opts] - Additional rendering options (e.g. beatPulse, isExport, forceRenderAll)
  */
 export function renderStudioFrame(comp, time, canvas, opts = {}) {
-  const width = comp.width || 1920;
-  const height = comp.height || 1080;
+  try {
+    const width = comp.width || 1920;
+    const height = comp.height || 1080;
 
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
-  const ctx = canvas.getContext('2d', { alpha: true });
-  if (!ctx) return;
-
-  // Background clear
-  ctx.save();
-  const bgMode = comp.bgMode || 'black';
-  if (bgMode === 'transparent') {
-    ctx.clearRect(0, 0, width, height);
-  } else if (bgMode === 'custom') {
-    ctx.fillStyle = comp.bgColor || '#060608';
-    ctx.fillRect(0, 0, width, height);
-  } else {
-    // Deep black CRT background
-    ctx.fillStyle = '#060608';
-    ctx.fillRect(0, 0, width, height);
-  }
-  ctx.restore();
-
-  const originX = width / 2;
-  const originY = height / 2;
-  const beatPulse = opts.beatPulse || 0;
-
-  // Render each visible layer directly onto the 3D typography canvas
-  for (const layer of comp.layers) {
-    if (!layer.visible) continue;
-
-    // Time window calculation
-    const startTime = layer.startTime || 0;
-    const duration = layer.duration || 5;
-    const endTime = startTime + duration;
-
-    // Strict time interval enforcement during export or live playback
-    if (time < startTime || time > endTime) {
-      if (opts.isExport || comp.isPlaying) {
-        continue;
-      }
-      if (comp.layers.length > 1 && !opts.forceRenderAll) {
-        continue;
-      }
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
 
-    const layerTime = clamp(time - startTime, 0, duration);
-    const normT = duration > 0 ? clamp(layerTime / duration, 0, 1) : 0;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
 
-    renderTextLayer(canvas, ctx, width, height, layer, normT, layerTime, duration, originX, originY, beatPulse, opts);
+    // Background clear
+    ctx.save();
+    const bgMode = comp.bgMode || 'black';
+    if (bgMode === 'transparent') {
+      ctx.clearRect(0, 0, width, height);
+    } else if (bgMode === 'custom') {
+      ctx.fillStyle = comp.bgColor || '#060608';
+      ctx.fillRect(0, 0, width, height);
+    } else {
+      // Deep black CRT background
+      ctx.fillStyle = '#060608';
+      ctx.fillRect(0, 0, width, height);
+    }
+    ctx.restore();
+
+    const originX = width / 2;
+    const originY = height / 2;
+    const beatPulse = opts.beatPulse || 0;
+
+    // Render each visible layer directly onto the 3D typography canvas
+    for (const layer of comp.layers) {
+      if (!layer.visible) continue;
+
+      // Time window calculation
+      const startTime = layer.startTime || 0;
+      const duration = layer.duration || 5;
+      const endTime = startTime + duration;
+
+      // Strict time interval enforcement during export or live playback
+      if (time < startTime || time > endTime) {
+        if (opts.isExport || comp.isPlaying) {
+          continue;
+        }
+        if (comp.layers.length > 1 && !opts.forceRenderAll) {
+          continue;
+        }
+      }
+
+      const layerTime = clamp(time - startTime, 0, duration);
+      const normT = duration > 0 ? clamp(layerTime / duration, 0, 1) : 0;
+
+      renderTextLayer(canvas, ctx, width, height, layer, normT, layerTime, duration, originX, originY, beatPulse, opts, comp.isPlaying);
+    }
+  } catch (err) {
+    console.error('[Ascili Studio] renderStudioFrame error:', err);
   }
 }
 
 /**
  * Render an individual 3D ASCII text layer.
  */
-function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, duration, originX, originY, beatPulse, opts) {
+function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, duration, originX, originY, beatPulse, opts, isPlaying) {
   // Preset evaluation (speed is factored into t and layerTime)
   const presetRes = evaluatePreset(layer.preset || 'cinematicReveal', layer, t, layerTime, duration);
 
-  const opacity = clamp((layer.opacity ?? 1.0) * (presetRes.opacity ?? 1.0), 0, 1);
+  let opacity = clamp((layer.opacity ?? 1.0) * (presetRes.opacity ?? 1.0), 0, 1);
+  // When paused in edit/preview mode, ensure the user can see their edits!
+  if (!isPlaying && !opts.isExport && opacity <= 0.05) {
+    opacity = clamp(layer.opacity ?? 1.0, 0.5, 1.0);
+  }
   if (opacity <= 0.001) return;
 
   // Layer & Preset Transform
@@ -467,13 +494,11 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
   const totalContentHeight = lines.length * lineHeight;
 
   // Vertical layout & 3D crawl motion
-  let scrollY = posY;
+  let scrollY = 0;
   if (isLongText && lines.length > 3) {
     const startY = height * 0.55;
     const endY = -totalContentHeight - height * 0.2;
-    scrollY = lerp(startY, endY, t) + posY;
-  } else {
-    scrollY = posY - (totalContentHeight / 2) + (lineHeight / 2);
+    scrollY = lerp(startY, endY, t);
   }
 
   // Surface lighting normal
@@ -482,6 +507,10 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
   const litFrontColor = lerpColor(frontColor, highlightColor, Math.max(0, frontLight - 0.5) * 1.5);
 
   const hasCharReveal = presetRes.visibleCharCount !== undefined;
+  const effectiveVisibleCharCount = (!isPlaying && !opts.isExport && hasCharReveal && presetRes.visibleCharCount === 0)
+    ? 999999
+    : presetRes.visibleCharCount;
+
   let charCounter = 0;
 
   // Patterns for 3D ASCII Typography
@@ -497,8 +526,12 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
 
   // ─── Short Text: True 3D ASCII Typography (Discrete Grid & Per-Character charStates) ───
   if (!isLongText && lines.length <= 4) {
-    const cellW = glyphDensity === 'fine' ? 8 : glyphDensity === 'coarse' ? 14 : 10;
-    const cellH = glyphDensity === 'fine' ? 12 : glyphDensity === 'coarse' ? 20 : 14;
+    const cellW = glyphDensity === 'fine' ? Math.max(3, Math.round(fontSize / 9.5))
+                : glyphDensity === 'coarse' ? Math.max(5, Math.round(fontSize / 5.5))
+                : Math.max(4, Math.round(fontSize / 7.2));
+    const cellH = glyphDensity === 'fine' ? Math.max(5, Math.round(fontSize / 6.5))
+                : glyphDensity === 'coarse' ? Math.max(7, Math.round(fontSize / 4.0))
+                : Math.max(6, Math.round(fontSize / 5.1));
 
     const charItems = [];
     let globalCharIdx = 0;
@@ -520,7 +553,7 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
       if (textAlign === 'left') curX = -width * 0.35;
       else if (textAlign === 'right') curX = width * 0.35 - totalLineWidth;
 
-      const lineYOffset = scrollY + li * lineHeight;
+      const lineYOffset = li * lineHeight - (totalContentHeight / 2) + (lineHeight / 2);
 
       for (let ci = 0; ci < lineText.length; ci++) {
         const ch = lineText[ci];
@@ -529,7 +562,7 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
         curX += cw;
 
         const charIdx = globalCharIdx++;
-        const isRevealed = !hasCharReveal || charIdx < presetRes.visibleCharCount;
+        const isRevealed = !hasCharReveal || charIdx < effectiveVisibleCharCount;
         if (!isRevealed || ch === ' ') continue;
 
         // Consume per-character animation states from presets (dissolve, scatter, glitch, wave, shatter, etc.)
@@ -589,11 +622,14 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
 
-          // Center projection for slice
-          const centerPt = transformPoint(item.rotMatrix, 0, 0, sliceDepth);
-          const cWorldX = centerPt.x + item.localX + posX + item.ox;
-          const cWorldY = centerPt.y + item.localY + posY + item.oy;
-          const cWorldZ = centerPt.z + posZ + item.oz;
+          // Transform character center in 3D
+          const charLx = item.localX + item.ox;
+          const charLy = item.localY + item.oy + scrollY;
+          const charLz = item.oz + sliceDepth;
+          const ptCharCenter = transformPoint(rotMatrix, charLx, charLy, charLz);
+          const cWorldX = ptCharCenter.x + posX;
+          const cWorldY = ptCharCenter.y + posY;
+          const cWorldZ = ptCharCenter.z + posZ;
           const centerProj = project3D(cWorldX, cWorldY, cWorldZ, originX, originY, fov, cameraZ);
 
           if (centerProj.scale > 0) {
@@ -606,12 +642,12 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
                 continue;
               }
 
-              const cellLx = (cell.gx - item.grid.cols / 2 + 0.5) * cellW * item.scale;
-              const cellLy = (cell.gy - item.grid.rows / 2 + 0.5) * cellH * item.scale;
-              const ptCell = transformPoint(item.rotMatrix, cellLx, cellLy, sliceDepth);
-              const cellWorldX = ptCell.x + item.localX + posX + item.ox;
-              const cellWorldY = ptCell.y + item.localY + posY + item.oy;
-              const cellWorldZ = ptCell.z + posZ + item.oz;
+              const cellLx = (cell.relX !== undefined ? cell.relX : (cell.gx - item.grid.cols / 2 + 0.5) * cellW) * item.scale;
+              const cellLy = (cell.relY !== undefined ? cell.relY : (cell.gy - item.grid.rows / 2 + 0.5) * cellH) * item.scale;
+              const ptCell = transformPoint(item.rotMatrix, cellLx, cellLy, 0);
+              const cellWorldX = ptCharCenter.x + ptCell.x + posX;
+              const cellWorldY = ptCharCenter.y + ptCell.y + posY;
+              const cellWorldZ = ptCharCenter.z + ptCell.z + posZ;
               const proj = project3D(cellWorldX, cellWorldY, cellWorldZ, originX, originY, fov, cameraZ);
 
               if (proj.scale <= 0) continue;
@@ -641,10 +677,13 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
-      const centerPt = transformPoint(item.rotMatrix, 0, 0, 0);
-      const cWorldX = centerPt.x + item.localX + posX + item.ox;
-      const cWorldY = centerPt.y + item.localY + posY + item.oy;
-      const cWorldZ = centerPt.z + posZ + item.oz;
+      const charLx = item.localX + item.ox;
+      const charLy = item.localY + item.oy + scrollY;
+      const charLz = item.oz;
+      const ptCharCenter = transformPoint(rotMatrix, charLx, charLy, charLz);
+      const cWorldX = ptCharCenter.x + posX;
+      const cWorldY = ptCharCenter.y + posY;
+      const cWorldZ = ptCharCenter.z + posZ;
       const centerProj = project3D(cWorldX, cWorldY, cWorldZ, originX, originY, fov, cameraZ);
 
       if (centerProj.scale > 0) {
@@ -661,12 +700,12 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
 
         // Draw each discrete ASCII cell on the front face
         for (const cell of item.grid.cells) {
-          const cellLx = (cell.gx - item.grid.cols / 2 + 0.5) * cellW * item.scale;
-          const cellLy = (cell.gy - item.grid.rows / 2 + 0.5) * cellH * item.scale;
+          const cellLx = (cell.relX !== undefined ? cell.relX : (cell.gx - item.grid.cols / 2 + 0.5) * cellW) * item.scale;
+          const cellLy = (cell.relY !== undefined ? cell.relY : (cell.gy - item.grid.rows / 2 + 0.5) * cellH) * item.scale;
           const ptCell = transformPoint(item.rotMatrix, cellLx, cellLy, 0);
-          const cellWorldX = ptCell.x + item.localX + posX + item.ox;
-          const cellWorldY = ptCell.y + item.localY + posY + item.oy;
-          const cellWorldZ = ptCell.z + posZ + item.oz;
+          const cellWorldX = ptCharCenter.x + ptCell.x + posX;
+          const cellWorldY = ptCharCenter.y + ptCell.y + posY;
+          const cellWorldZ = ptCharCenter.z + ptCell.z + posZ;
           const proj = project3D(cellWorldX, cellWorldY, cellWorldZ, originX, originY, fov, cameraZ);
 
           if (proj.scale <= 0) continue;
@@ -704,10 +743,10 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
           if (!lineText) continue;
 
           const lineY = scrollY + li * lineHeight;
-          const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ + sliceDepth);
-          if (ptCenter.z <= -cameraZ + 1) continue;
+          const ptCenter = transformPoint(rotMatrix, 0, lineY, sliceDepth);
+          if (ptCenter.z + posZ <= -cameraZ + 1) continue;
 
-          const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
+          const proj = project3D(ptCenter.x + posX, ptCenter.y + posY, ptCenter.z + posZ, originX, originY, fov, cameraZ);
           if (proj.scale <= 0) continue;
 
           // Viewport frustum culling
@@ -742,10 +781,10 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
       if (!lineText) continue;
 
       const lineY = scrollY + li * lineHeight;
-      const ptCenter = transformPoint(rotMatrix, posX, lineY, posZ);
-      if (ptCenter.z <= -cameraZ + 1) continue;
+      const ptCenter = transformPoint(rotMatrix, 0, lineY, 0);
+      if (ptCenter.z + posZ <= -cameraZ + 1) continue;
 
-      const proj = project3D(ptCenter.x, ptCenter.y, ptCenter.z, originX, originY, fov, cameraZ);
+      const proj = project3D(ptCenter.x + posX, ptCenter.y + posY, ptCenter.z + posZ, originX, originY, fov, cameraZ);
       if (proj.scale <= 0) continue;
 
       if (proj.y < -200 || proj.y > height + 200) {
@@ -758,10 +797,10 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
         const lineEnd = charCounter + lineText.length;
         charCounter = lineEnd;
 
-        if (presetRes.visibleCharCount < lineStart) {
+        if (effectiveVisibleCharCount < lineStart) {
           continue;
-        } else if (presetRes.visibleCharCount < lineEnd) {
-          const charsInLine = presetRes.visibleCharCount - lineStart;
+        } else if (effectiveVisibleCharCount < lineEnd) {
+          const charsInLine = effectiveVisibleCharCount - lineStart;
           lineText = lineText.slice(0, charsInLine) + (presetRes.cursor || '');
         }
       }
