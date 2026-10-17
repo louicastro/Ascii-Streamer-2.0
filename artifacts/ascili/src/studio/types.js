@@ -107,9 +107,14 @@ export function createDefaultLayer(id = 'layer-1', text = 'ASCII 3D STUDIO', sta
     cameraZ: 0,          // camera distance offset
 
     // Shading & Material
-    charSet: 'standard', // 'standard', 'extended', 'block', 'minimal', 'braille', 'matrix', 'cyberpunk', 'custom'
+    charSet: 'standard', // 'standard', 'extended', 'block', 'minimal', 'braille', 'matrix', 'custom'
     customChars: '',
     invertChars: false,
+    colorMode: 'truecolor', // 'truecolor', 'monochrome', 'grayscale', 'ansi16', 'ansi256'
+    asciiCols: 120,      // ASCII matrix columns
+    dithering: 'none',   // 'none', 'bayer', 'floyd', 'atkinson'
+    enableEdgeDetection: true,
+    asciiEngineMode: true, // Render with authentic ASCII stream engine
     charDensity: 1.0,    // grid cell density multiplier
     frontColor: '#ffffff',
     extrudeColor: '#3a7bd5',
@@ -157,6 +162,12 @@ export function createDefaultComposition() {
     aspectRatio: '16:9',
     width: 1920,
     height: 1080,
+    charSet: 'standard',
+    colorMode: 'truecolor',
+    asciiCols: 120,
+    dithering: 'none',
+    enableEdgeDetection: true,
+    asciiEngineMode: true,
     layers: [defaultLayer],
     selectedLayerId: defaultLayer.id,
     currentTime: 0.0,

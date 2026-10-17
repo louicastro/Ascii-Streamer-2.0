@@ -58,37 +58,48 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
       const charCount = Math.max(0, Math.min(textLen, Math.floor(scaledT * (textLen + 1))));
       const isBlink = Math.floor(scaledLayerTime * 3) % 2 === 0;
       const cursor = scaledT < 1.0 && isBlink ? '█' : '';
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const isShown = i < charCount;
-        result.charStates.push({
-          char: isShown ? text[i] : (i === charCount && cursor ? '█' : ' '),
-          opacity: isShown || (i === charCount && cursor) ? 1.0 : 0.0,
-          ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
-        });
+      result.visibleCharCount = charCount;
+      result.cursor = cursor;
+
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const isShown = i < charCount;
+          result.charStates.push({
+            char: isShown ? text[i] : (i === charCount && cursor ? '█' : ' '),
+            opacity: isShown || (i === charCount && cursor) ? 1.0 : 0.0,
+            ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
+          });
+        }
       }
       break;
     }
 
     // 2. Character Reveal: Matrix-style random glyph resolution
     case 'characterReveal': {
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const charThreshold = (i + 0.5) / Math.max(1, textLen);
-        if (scaledT >= charThreshold) {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else if (scaledT >= charThreshold - 0.25) {
-          // Scrambling glyph phase
-          const randIdx = Math.floor(pseudoRandom(i * 19.3 + Math.floor(scaledLayerTime * 15)) * MATRIX_GLYPHS.length);
-          result.charStates.push({
-            char: MATRIX_GLYPHS[randIdx],
-            opacity: 0.9,
-            ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
-            color: '#39ff52',
-          });
-        } else {
-          result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+      const charCount = Math.max(0, Math.min(textLen, Math.floor(scaledT * (textLen + 1))));
+      result.visibleCharCount = charCount;
+
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const charThreshold = (i + 0.5) / Math.max(1, textLen);
+          if (scaledT >= charThreshold) {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else if (scaledT >= charThreshold - 0.25) {
+            const randIdx = Math.floor(pseudoRandom(i * 19.3 + Math.floor(scaledLayerTime * 15)) * MATRIX_GLYPHS.length);
+            result.charStates.push({
+              char: MATRIX_GLYPHS[randIdx],
+              opacity: 0.9,
+              ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
+              color: '#39ff52',
+            });
+          } else {
+            result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          }
         }
+      } else {
+        result.opacity = clamp(scaledT * 2.0, 0, 1.0);
       }
       break;
     }
@@ -125,31 +136,36 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
     // 6. ASCII Dissolve: characters disintegrate into decaying ASCII noise glyphs
     case 'dissolve': {
       const progress = easedT;
-      result.charStates = [];
-      const dissolveChars = '@#*+=:-. ';
-      for (let i = 0; i < textLen; i++) {
-        const noise = pseudoRandom(i * 37.1);
-        const charProgress = clamp((progress - noise * 0.4) / 0.6, 0, 1);
-        if (charProgress <= 0) {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else if (charProgress >= 1) {
-          result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else {
-          const charIdx = Math.floor(charProgress * (dissolveChars.length - 1));
-          const scatterY = charProgress * 40;
-          const scatterZ = charProgress * -120;
-          result.charStates.push({
-            char: dissolveChars[charIdx],
-            opacity: 1.0 - charProgress,
-            ox: (pseudoRandom(i * 12.3) - 0.5) * charProgress * 30,
-            oy: scatterY,
-            oz: scatterZ,
-            rotX: charProgress * 45,
-            rotY: 0,
-            rotZ: 0,
-            scale: 1.0 - charProgress * 0.4,
-          });
+      if (textLen <= 120) {
+        result.charStates = [];
+        const dissolveChars = '@#*+=:-. ';
+        for (let i = 0; i < textLen; i++) {
+          const noise = pseudoRandom(i * 37.1);
+          const charProgress = clamp((progress - noise * 0.4) / 0.6, 0, 1);
+          if (charProgress <= 0) {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else if (charProgress >= 1) {
+            result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else {
+            const charIdx = Math.floor(charProgress * (dissolveChars.length - 1));
+            const scatterY = charProgress * 40;
+            const scatterZ = charProgress * -120;
+            result.charStates.push({
+              char: dissolveChars[charIdx],
+              opacity: 1.0 - charProgress,
+              ox: (pseudoRandom(i * 12.3) - 0.5) * charProgress * 30,
+              oy: scatterY,
+              oz: scatterZ,
+              rotX: charProgress * 45,
+              rotY: 0,
+              rotZ: 0,
+              scale: 1.0 - charProgress * 0.4,
+            });
+          }
         }
+      } else {
+        result.opacity = clamp(1.0 - progress * 1.2, 0, 1.0);
+        result.transform.posZ += progress * -350;
       }
       break;
     }
@@ -157,25 +173,32 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
     // 7. Particle Scatter: characters explode outward radially in 3D
     case 'particleScatter': {
       const progress = easedT;
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const seed = i + 1;
-        const angle = pseudoRandom(seed * 41.7) * Math.PI * 2;
-        const scatterSpd = 250 + pseudoRandom(seed * 99.1) * 350;
-        const zVel = (pseudoRandom(seed * 17.5) - 0.5) * 600;
-        const ox = Math.cos(angle) * scatterSpd * progress;
-        const oy = Math.sin(angle) * scatterSpd * progress;
-        const oz = zVel * progress;
-        const rotX = progress * 360 * (pseudoRandom(seed * 3.3) - 0.5);
-        const rotY = progress * 360 * (pseudoRandom(seed * 7.7) - 0.5);
-        const rotZ = progress * 180 * (pseudoRandom(seed * 5.1) - 0.5);
-        const op = clamp(1.0 - progress * 1.2, 0, 1.0);
-        result.charStates.push({
-          char: text[i],
-          ox, oy, oz, rotX, rotY, rotZ,
-          scale: Math.max(0.1, 1.0 - progress * 0.5),
-          opacity: op,
-        });
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const seed = i + 1;
+          const angle = pseudoRandom(seed * 41.7) * Math.PI * 2;
+          const scatterSpd = 250 + pseudoRandom(seed * 99.1) * 350;
+          const zVel = (pseudoRandom(seed * 17.5) - 0.5) * 600;
+          const ox = Math.cos(angle) * scatterSpd * progress;
+          const oy = Math.sin(angle) * scatterSpd * progress;
+          const oz = zVel * progress;
+          const rotX = progress * 360 * (pseudoRandom(seed * 3.3) - 0.5);
+          const rotY = progress * 360 * (pseudoRandom(seed * 7.7) - 0.5);
+          const rotZ = progress * 180 * (pseudoRandom(seed * 5.1) - 0.5);
+          const op = clamp(1.0 - progress * 1.2, 0, 1.0);
+          result.charStates.push({
+            char: text[i],
+            ox, oy, oz, rotX, rotY, rotZ,
+            scale: Math.max(0.1, 1.0 - progress * 0.5),
+            opacity: op,
+          });
+        }
+      } else {
+        result.opacity = clamp(1.0 - progress * 1.2, 0, 1.0);
+        result.transform.scale = Math.max(0.1, 1.0 - progress * 0.5);
+        result.transform.rotX += progress * 180;
+        result.transform.rotY += progress * 240;
       }
       break;
     }
@@ -185,41 +208,49 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
       const isGlitchBurst = pseudoRandom(Math.floor(scaledLayerTime * 12)) > 0.45;
       result.glitchIntensity = isGlitchBurst ? 0.75 : 0.15;
       if (isGlitchBurst) {
-        result.transform.posX += (pseudoRandom(scaledLayerTime * 43.1) - 0.5) * 35;
-        result.transform.posY += (pseudoRandom(scaledLayerTime * 87.2) - 0.5) * 12;
+        result.transform.posX += (pseudoRandom(scaledLayerTime * 43.1) - 0.5) * 45;
+        result.transform.posY += (pseudoRandom(scaledLayerTime * 87.2) - 0.5) * 16;
       }
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const mutate = isGlitchBurst && pseudoRandom(i * 3.7 + scaledLayerTime) > 0.7;
-        const mutatedChar = mutate ? MATRIX_GLYPHS[Math.floor(pseudoRandom(i + scaledLayerTime) * MATRIX_GLYPHS.length)] : text[i];
-        const jx = isGlitchBurst ? (pseudoRandom(i * 11.1) - 0.5) * 18 : 0;
-        result.charStates.push({
-          char: mutatedChar,
-          ox: jx, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
-          opacity: 1.0,
-          color: mutate ? '#ff0055' : null,
-        });
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const mutate = isGlitchBurst && pseudoRandom(i * 3.7 + scaledLayerTime) > 0.7;
+          const mutatedChar = mutate ? MATRIX_GLYPHS[Math.floor(pseudoRandom(i + scaledLayerTime) * MATRIX_GLYPHS.length)] : text[i];
+          const jx = isGlitchBurst ? (pseudoRandom(i * 11.1) - 0.5) * 18 : 0;
+          result.charStates.push({
+            char: mutatedChar,
+            ox: jx, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
+            opacity: 1.0,
+            color: mutate ? '#ff0055' : null,
+          });
+        }
       }
       break;
     }
 
     // 9. 3D Sine Wave: undulation rippling through characters in 3D
     case 'wave': {
-      result.charStates = [];
-      const waveFreq = 0.5;
-      const waveSpeed = 4.0;
-      for (let i = 0; i < textLen; i++) {
-        const phase = i * waveFreq - scaledLayerTime * waveSpeed;
-        const oy = Math.sin(phase) * 28;
-        const oz = Math.cos(phase) * 60;
-        const rx = Math.sin(phase) * 25;
-        result.charStates.push({
-          char: text[i],
-          ox: 0, oy, oz,
-          rotX: rx, rotY: 0, rotZ: 0,
-          scale: 1.0 + Math.sin(phase) * 0.15,
-          opacity: 1.0,
-        });
+      if (textLen <= 120) {
+        result.charStates = [];
+        const waveFreq = 0.5;
+        const waveSpeed = 4.0;
+        for (let i = 0; i < textLen; i++) {
+          const phase = i * waveFreq - scaledLayerTime * waveSpeed;
+          const oy = Math.sin(phase) * 28;
+          const oz = Math.cos(phase) * 60;
+          const rx = Math.sin(phase) * 25;
+          result.charStates.push({
+            char: text[i],
+            ox: 0, oy, oz,
+            rotX: rx, rotY: 0, rotZ: 0,
+            scale: 1.0 + Math.sin(phase) * 0.15,
+            opacity: 1.0,
+          });
+        }
+      } else {
+        result.transform.rotX += Math.sin(scaledLayerTime * 3.5) * 16;
+        result.transform.posY += Math.sin(scaledLayerTime * 4.0) * 25;
+        result.transform.posZ += Math.cos(scaledLayerTime * 2.5) * 60;
       }
       break;
     }
@@ -243,23 +274,27 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
     // 12. Scanline Reveal: CRT electron beam sweeping top to bottom
     case 'scanlineReveal': {
       result.lighting.scanlineIntensity = 0.8;
-      result.charStates = [];
-      const sweepY = easedT; // 0 to 1
-      for (let i = 0; i < textLen; i++) {
-        const relPos = (i + 0.5) / Math.max(1, textLen);
-        const diff = sweepY - relPos;
-        if (diff > 0.05) {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else if (diff >= -0.05) {
-          // Glowing active scan beam
-          result.charStates.push({
-            char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 20,
-            rotX: 0, rotY: 0, rotZ: 0, scale: 1.15,
-            color: '#39ff52',
-          });
-        } else {
-          result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+      if (textLen <= 120) {
+        result.charStates = [];
+        const sweepY = easedT; // 0 to 1
+        for (let i = 0; i < textLen; i++) {
+          const relPos = (i + 0.5) / Math.max(1, textLen);
+          const diff = sweepY - relPos;
+          if (diff > 0.05) {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else if (diff >= -0.05) {
+            result.charStates.push({
+              char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 20,
+              rotX: 0, rotY: 0, rotZ: 0, scale: 1.15,
+              color: '#39ff52',
+            });
+          } else {
+            result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          }
         }
+      } else {
+        result.lighting.scanlineIntensity = clamp((1.0 - easedT) * 0.9, 0, 1);
+        result.opacity = clamp(easedT * 2.0, 0, 1.0);
       }
       break;
     }
@@ -285,117 +320,146 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
 
     // 15. Horizontal Sweep: left-to-right wipe with ASCII spark front
     case 'horizontalSweep': {
-      result.charStates = [];
-      const leadPos = easedT * (textLen + 2);
-      for (let i = 0; i < textLen; i++) {
-        if (i < leadPos - 1) {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else if (i < leadPos) {
-          result.charStates.push({
-            char: '*', opacity: 1.0, ox: 0, oy: 0, oz: 30,
-            rotX: 0, rotY: 0, rotZ: 0, scale: 1.25,
-            color: '#ffea00',
-          });
-        } else {
-          result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+      if (textLen <= 120) {
+        result.charStates = [];
+        const leadPos = easedT * (textLen + 2);
+        for (let i = 0; i < textLen; i++) {
+          if (i < leadPos - 1) {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else if (i < leadPos) {
+            result.charStates.push({
+              char: '*', opacity: 1.0, ox: 0, oy: 0, oz: 30,
+              rotX: 0, rotY: 0, rotZ: 0, scale: 1.25,
+              color: '#ffea00',
+            });
+          } else {
+            result.charStates.push({ char: ' ', opacity: 0.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          }
         }
+      } else {
+        result.lighting.lightDirX = lerp(-2.0, 2.0, easedT);
+        result.lighting.bloomIntensity = (layer.bloomIntensity ?? 0.5) * (1.0 + Math.sin(easedT * Math.PI) * 1.2);
+        result.opacity = clamp(scaledT * 2.5, 0, 1.0);
       }
       break;
     }
 
     // 16. Vertical Sweep: cascade from top
     case 'verticalSweep': {
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const charStart = (i / Math.max(1, textLen)) * 0.5;
-        const charT = clamp((scaledT - charStart) / 0.5, 0, 1);
-        const charEased = applyEasing('easeOutBounce', charT);
-        const oy = lerp(-140, 0, charEased);
-        const op = clamp(charT * 2.0, 0, 1.0);
-        result.charStates.push({
-          char: text[i],
-          ox: 0, oy, oz: 0,
-          rotX: lerp(90, 0, charEased),
-          rotY: 0, rotZ: 0,
-          scale: lerp(0.5, 1.0, charEased),
-          opacity: op,
-        });
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const charStart = (i / Math.max(1, textLen)) * 0.5;
+          const charT = clamp((scaledT - charStart) / 0.5, 0, 1);
+          const charEased = applyEasing('easeOutBounce', charT);
+          const oy = lerp(-140, 0, charEased);
+          const op = clamp(charT * 2.0, 0, 1.0);
+          result.charStates.push({
+            char: text[i],
+            ox: 0, oy, oz: 0,
+            rotX: lerp(90, 0, charEased),
+            rotY: 0, rotZ: 0,
+            scale: lerp(0.5, 1.0, charEased),
+            opacity: op,
+          });
+        }
+      } else {
+        result.transform.posY += lerp(-250, 0, easedT);
+        result.opacity = clamp(easedT * 1.8, 0, 1.0);
       }
       break;
     }
 
     // 17. Ripple: radial circular shockwave expanding from center
     case 'ripple': {
-      result.charStates = [];
-      const mid = (textLen - 1) / 2;
-      const waveFront = easedT * (mid + 4);
-      for (let i = 0; i < textLen; i++) {
-        const dist = Math.abs(i - mid);
-        const waveDist = Math.abs(dist - waveFront);
-        if (waveDist < 2.0) {
-          const impact = Math.cos((waveDist / 2.0) * Math.PI * 0.5);
-          result.charStates.push({
-            char: text[i],
-            ox: 0,
-            oy: -impact * 35,
-            oz: impact * 80,
-            rotX: -impact * 30,
-            rotY: 0, rotZ: 0,
-            scale: 1.0 + impact * 0.25,
-            opacity: 1.0,
-            color: impact > 0.6 ? '#00ffff' : null,
-          });
-        } else {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+      if (textLen <= 120) {
+        result.charStates = [];
+        const mid = (textLen - 1) / 2;
+        const waveFront = easedT * (mid + 4);
+        for (let i = 0; i < textLen; i++) {
+          const dist = Math.abs(i - mid);
+          const waveDist = Math.abs(dist - waveFront);
+          if (waveDist < 2.0) {
+            const impact = Math.cos((waveDist / 2.0) * Math.PI * 0.5);
+            result.charStates.push({
+              char: text[i],
+              ox: 0,
+              oy: -impact * 35,
+              oz: impact * 80,
+              rotX: -impact * 30,
+              rotY: 0, rotZ: 0,
+              scale: 1.0 + impact * 0.25,
+              opacity: 1.0,
+              color: impact > 0.6 ? '#00ffff' : null,
+            });
+          } else {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          }
         }
+      } else {
+        const impact = Math.sin(scaledLayerTime * 5.0);
+        result.transform.scale = 1.0 + impact * 0.08;
+        result.transform.posZ += impact * 40;
       }
       break;
     }
 
     // 18. Shatter: faceted 3D ASCII shards tumbling away
     case 'shatter': {
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const seed = i * 13.7 + 1.1;
-        const shardT = easedT;
-        const dx = (pseudoRandom(seed * 3.1) - 0.5) * 500 * shardT;
-        const dy = (pseudoRandom(seed * 5.7) - 0.5) * 400 * shardT + (shardT * shardT * 200); // gravity
-        const dz = (pseudoRandom(seed * 7.9) - 0.5) * 600 * shardT;
-        const rx = pseudoRandom(seed * 2.3) * 720 * shardT;
-        const ry = pseudoRandom(seed * 4.1) * 720 * shardT;
-        const rz = pseudoRandom(seed * 6.5) * 360 * shardT;
-        const op = clamp(1.0 - shardT * 1.1, 0, 1.0);
-        result.charStates.push({
-          char: text[i],
-          ox: dx, oy: dy, oz: dz,
-          rotX: rx, rotY: ry, rotZ: rz,
-          scale: Math.max(0.2, 1.0 - shardT * 0.6),
-          opacity: op,
-        });
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const seed = i * 13.7 + 1.1;
+          const shardT = easedT;
+          const dx = (pseudoRandom(seed * 3.1) - 0.5) * 500 * shardT;
+          const dy = (pseudoRandom(seed * 5.7) - 0.5) * 400 * shardT + (shardT * shardT * 200); // gravity
+          const dz = (pseudoRandom(seed * 7.9) - 0.5) * 600 * shardT;
+          const rx = pseudoRandom(seed * 2.3) * 720 * shardT;
+          const ry = pseudoRandom(seed * 4.1) * 720 * shardT;
+          const rz = pseudoRandom(seed * 6.5) * 360 * shardT;
+          const op = clamp(1.0 - shardT * 1.1, 0, 1.0);
+          result.charStates.push({
+            char: text[i],
+            ox: dx, oy: dy, oz: dz,
+            rotX: rx, rotY: ry, rotZ: rz,
+            scale: Math.max(0.2, 1.0 - shardT * 0.6),
+            opacity: op,
+          });
+        }
+      } else {
+        result.transform.rotX += easedT * 90;
+        result.transform.rotY += easedT * 120;
+        result.transform.scale = Math.max(0.1, 1.0 - easedT * 0.7);
+        result.opacity = clamp(1.0 - easedT * 1.2, 0, 1.0);
       }
       break;
     }
 
     // 19. Digital Rain: cascading green Katakana & ASCII streams resolving into words
     case 'digitalRain': {
-      result.charStates = [];
-      for (let i = 0; i < textLen; i++) {
-        const settleTime = 0.3 + (i / Math.max(1, textLen)) * 0.5;
-        if (scaledT >= settleTime) {
-          result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
-        } else {
-          const rainPhase = (scaledLayerTime * 12 + i * 2) % MATRIX_GLYPHS.length;
-          const char = MATRIX_GLYPHS[Math.floor(rainPhase)];
-          const dropY = ((scaledLayerTime * 200 + i * 35) % 80) - 40;
-          result.charStates.push({
-            char,
-            ox: 0, oy: dropY, oz: 20,
-            rotX: 0, rotY: 0, rotZ: 0,
-            scale: 1.05,
-            opacity: 0.9,
-            color: '#39ff52',
-          });
+      if (textLen <= 120) {
+        result.charStates = [];
+        for (let i = 0; i < textLen; i++) {
+          const settleTime = 0.3 + (i / Math.max(1, textLen)) * 0.5;
+          if (scaledT >= settleTime) {
+            result.charStates.push({ char: text[i], opacity: 1.0, ox: 0, oy: 0, oz: 0, rotX: 0, rotY: 0, rotZ: 0, scale: 1.0 });
+          } else {
+            const rainPhase = (scaledLayerTime * 12 + i * 2) % MATRIX_GLYPHS.length;
+            const char = MATRIX_GLYPHS[Math.floor(rainPhase)];
+            const dropY = ((scaledLayerTime * 200 + i * 35) % 80) - 40;
+            result.charStates.push({
+              char,
+              ox: 0, oy: dropY, oz: 20,
+              rotX: 0, rotY: 0, rotZ: 0,
+              scale: 1.05,
+              opacity: 0.9,
+              color: '#39ff52',
+            });
+          }
         }
+      } else {
+        result.lighting.bloomIntensity = 0.8;
+        result.transform.posY += ((scaledLayerTime * 100) % 60) - 30;
       }
       break;
     }

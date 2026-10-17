@@ -214,6 +214,12 @@ export function validateAndSanitizeProject(raw) {
     bgMode: ['black', 'transparent', 'custom'].includes(raw.bgMode) ? raw.bgMode : 'black',
     bgColor: safeColor(raw.bgColor, '#060608'),
     syncToBeat: Boolean(raw.syncToBeat),
+    charSet: safeStr(raw.charSet, 30, 'standard'),
+    colorMode: safeStr(raw.colorMode, 20, 'truecolor'),
+    asciiCols: safeNum(Math.round(raw.asciiCols), 20, 400, 120),
+    dithering: ['none', 'bayer', 'floyd', 'atkinson'].includes(raw.dithering) ? raw.dithering : 'none',
+    enableEdgeDetection: typeof raw.enableEdgeDetection === 'boolean' ? raw.enableEdgeDetection : true,
+    asciiEngineMode: typeof raw.asciiEngineMode === 'boolean' ? raw.asciiEngineMode : true,
     zoom: 1.0,
     layers: [],
   };
@@ -234,7 +240,7 @@ export function validateAndSanitizeProject(raw) {
     return {
       id: safeStr(l.id, 64, `layer-${idx + 1}`),
       name: safeStr(l.name, 50, 'Text Layer'),
-      text: typeof l.text === 'string' ? l.text.slice(0, 2000) : 'Text',
+      text: typeof l.text === 'string' ? l.text.slice(0, 200000) : 'Text',
       visible: typeof l.visible === 'boolean' ? l.visible : true,
       locked: Boolean(l.locked),
       startTime: safeNum(l.startTime, 0, sanitized.duration, 0),
@@ -263,6 +269,11 @@ export function validateAndSanitizeProject(raw) {
       charSet: safeStr(l.charSet, 30, 'standard'),
       customChars: safeStr(l.customChars, 100, ''),
       invertChars: Boolean(l.invertChars),
+      colorMode: safeStr(l.colorMode, 20, 'truecolor'),
+      asciiCols: safeNum(Math.round(l.asciiCols), 20, 400, 120),
+      dithering: ['none', 'bayer', 'floyd', 'atkinson'].includes(l.dithering) ? l.dithering : 'none',
+      enableEdgeDetection: typeof l.enableEdgeDetection === 'boolean' ? l.enableEdgeDetection : true,
+      asciiEngineMode: typeof l.asciiEngineMode === 'boolean' ? l.asciiEngineMode : true,
       charDensity: safeNum(l.charDensity, 0.1, 5, 1.0),
       asciiTextureMode: typeof l.asciiTextureMode === 'boolean' ? l.asciiTextureMode : true,
 

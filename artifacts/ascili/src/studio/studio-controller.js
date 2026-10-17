@@ -61,9 +61,9 @@ export class StudioController {
           <div class="studio-section">
             <div class="studio-section-title">
               <span>LIVE TEXT INPUT</span>
-              <span class="studio-val-badge">LIVE 3D</span>
+              <span class="studio-val-badge" id="studioWordCountBadge">0 Words</span>
             </div>
-            <textarea class="studio-textarea" id="studioTextInput" placeholder="Type lyrics, title, or quote..."></textarea>
+            <textarea class="studio-textarea" id="studioTextInput" placeholder="Type lyrics, title, or quote (supports 2,000+ words)..." style="min-height:95px;"></textarea>
           </div>
 
           <!-- Typography Properties -->
@@ -243,6 +243,67 @@ export class StudioController {
             </div>
           </div>
 
+          <!-- ASCII Character Set & Stream Engine -->
+          <div class="studio-section">
+            <div class="studio-section-title">
+              <span>ASCII CHARACTER SET & ENGINE</span>
+              <span class="studio-val-badge" style="color:#39ff52;">VIDEO STREAM</span>
+            </div>
+
+            <label class="studio-checkbox-row">
+              <input type="checkbox" id="studioAsciiEngineCheck" checked />
+              <span>Enable ASCII Stream Engine</span>
+            </label>
+
+            <label class="studio-label">Character Set</label>
+            <select class="studio-select" id="studioCharSet">
+              <option value="standard">Standard ( .:-=+*#%@ )</option>
+              <option value="extended">Extended 70-Glyph ( ASCII Detail )</option>
+              <option value="block">Block Density ( ░▒▓█ )</option>
+              <option value="matrix">Matrix Terminal ( .:=+*#MW&8%B@$ )</option>
+              <option value="braille">Braille Matrix ( ⠁⠂⠃⠄... )</option>
+              <option value="minimal">Minimal Mono ( .oO0 )</option>
+              <option value="custom">Custom Characters...</option>
+            </select>
+
+            <div id="studioCustomCharWrap" style="display:none; margin-bottom:8px;">
+              <input type="text" class="studio-input" id="studioCustomChars" placeholder="e.g.  .:=*#%@" style="width:100%; margin-bottom:0;" />
+            </div>
+
+            <label class="studio-label">Color Mode</label>
+            <select class="studio-select" id="studioColorMode">
+              <option value="truecolor">Truecolor (Full 3D Colors & Glow)</option>
+              <option value="monochrome">Monochrome CRT</option>
+              <option value="grayscale">Grayscale Shading</option>
+              <option value="ansi16">Retro 16-Color ANSI</option>
+              <option value="ansi256">256-Color Extended Terminal</option>
+            </select>
+
+            <div class="studio-slider-row">
+              <span class="studio-label" style="margin:0; width:70px;">Density</span>
+              <input type="range" class="studio-range" id="studioAsciiCols" min="40" max="240" step="2" value="120" />
+              <input type="number" class="studio-num-input" id="studioAsciiColsNum" value="120" />
+            </div>
+
+            <label class="studio-label">Dithering Mode</label>
+            <select class="studio-select" id="studioDithering">
+              <option value="none">None (Crisp)</option>
+              <option value="bayer">Bayer 4×4 Ordered</option>
+              <option value="floyd">Floyd-Steinberg Error Diffusion</option>
+              <option value="atkinson">Atkinson MacPaint</option>
+            </select>
+
+            <label class="studio-checkbox-row">
+              <input type="checkbox" id="studioEdgeDetectCheck" checked />
+              <span>Directional ASCII Edge Strokes (- | / \\)</span>
+            </label>
+
+            <label class="studio-checkbox-row">
+              <input type="checkbox" id="studioInvertCharsCheck" />
+              <span>Invert Character Ramp</span>
+            </label>
+          </div>
+
           <!-- Retro CRT Scanlines & Bloom FX -->
           <div class="studio-section">
             <div class="studio-section-title">RETRO FX & SHADING</div>
@@ -337,12 +398,23 @@ export class StudioController {
 
   _bindInputs() {
     const textInput = this.container.querySelector('#studioTextInput');
+    const updateWordBadge = (val) => {
+      const trimmed = (val || '').trim();
+      const words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+      const chars = val ? val.length : 0;
+      const badge = this.container.querySelector('#studioWordCountBadge');
+      if (badge) {
+        badge.textContent = words > 1 ? `${words.toLocaleString()} Words · ${chars.toLocaleString()} Chars` : (words === 1 ? `1 Word · ${chars} Chars` : '0 Words');
+      }
+    };
     textInput.value = this.selectedLayer.text;
+    updateWordBadge(this.selectedLayer.text);
 
-    // Live typing updates
+    // Live typing updates (supports 2,000+ words)
     textInput.addEventListener('input', (e) => {
       this.selectedLayer.text = e.target.value;
       this.selectedLayer.name = e.target.value.slice(0, 18) || 'Text Layer';
+      updateWordBadge(e.target.value);
       this.timeline?.render();
       this._saveAutosave();
     });
@@ -421,6 +493,57 @@ export class StudioController {
     bindCheck('studioScanlinesCheck', 'scanlines');
     bindCheck('studioBloomCheck', 'bloom');
     bindCheck('studioShadowCheck', 'shadow');
+
+    // ASCII Stream Engine Controls
+    bindPair('studioAsciiCols', 'studioAsciiColsNum', 'asciiCols');
+
+    const asciiEngineCheck = this.container.querySelector('#studioAsciiEngineCheck');
+    asciiEngineCheck?.addEventListener('change', (e) => {
+      this.selectedLayer.asciiEngineMode = e.target.checked;
+      this.comp.asciiEngineMode = e.target.checked;
+      this._saveAutosave();
+    });
+
+    const charSetSelect = this.container.querySelector('#studioCharSet');
+    const customCharWrap = this.container.querySelector('#studioCustomCharWrap');
+    const customCharInput = this.container.querySelector('#studioCustomChars');
+
+    charSetSelect?.addEventListener('change', (e) => {
+      this.selectedLayer.charSet = e.target.value;
+      this.comp.charSet = e.target.value;
+      if (customCharWrap) customCharWrap.style.display = e.target.value === 'custom' ? 'block' : 'none';
+      this._saveAutosave();
+    });
+
+    customCharInput?.addEventListener('input', (e) => {
+      this.selectedLayer.customChars = e.target.value;
+      this.comp.customChars = e.target.value;
+      this._saveAutosave();
+    });
+
+    this.container.querySelector('#studioColorMode')?.addEventListener('change', (e) => {
+      this.selectedLayer.colorMode = e.target.value;
+      this.comp.colorMode = e.target.value;
+      this._saveAutosave();
+    });
+
+    this.container.querySelector('#studioDithering')?.addEventListener('change', (e) => {
+      this.selectedLayer.dithering = e.target.value;
+      this.comp.dithering = e.target.value;
+      this._saveAutosave();
+    });
+
+    this.container.querySelector('#studioEdgeDetectCheck')?.addEventListener('change', (e) => {
+      this.selectedLayer.enableEdgeDetection = e.target.checked;
+      this.comp.enableEdgeDetection = e.target.checked;
+      this._saveAutosave();
+    });
+
+    this.container.querySelector('#studioInvertCharsCheck')?.addEventListener('change', (e) => {
+      this.selectedLayer.invertChars = e.target.checked;
+      this.comp.invertChars = e.target.checked;
+      this._saveAutosave();
+    });
 
     // Presets
     const presetGrid = this.container.querySelector('#studioPresetGrid');
@@ -603,7 +726,16 @@ export class StudioController {
     const layer = this.selectedLayer;
     if (!layer) return;
 
-    this.container.querySelector('#studioTextInput').value = layer.text || '';
+    const textInput = this.container.querySelector('#studioTextInput');
+    textInput.value = layer.text || '';
+    const trimmed = (layer.text || '').trim();
+    const words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+    const chars = (layer.text || '').length;
+    const badge = this.container.querySelector('#studioWordCountBadge');
+    if (badge) {
+      badge.textContent = words > 1 ? `${words.toLocaleString()} Words · ${chars.toLocaleString()} Chars` : (words === 1 ? `1 Word · ${chars} Chars` : '0 Words');
+    }
+
     this.container.querySelector('#studioFontFamily').value = layer.fontFamily || "'JetBrains Mono', monospace";
     this.container.querySelector('#studioPresetEasing').value = layer.presetEasing || 'easeInOutCubic';
 
@@ -625,6 +757,7 @@ export class StudioController {
     setPair('studioScanlineIntensity', 'studioScanlineIntensityNum', layer.scanlineIntensity ?? 0.35);
     setPair('studioBloomIntensity', 'studioBloomIntensityNum', layer.bloomIntensity ?? 0.5);
     setPair('studioPresetSpeed', 'studioPresetSpeedNum', layer.presetSpeed ?? 1.0);
+    setPair('studioAsciiCols', 'studioAsciiColsNum', layer.asciiCols ?? 120);
 
     this.container.querySelector('#studioFrontColor').value = layer.frontColor || '#ffffff';
     this.container.querySelector('#studioExtrudeColor').value = layer.extrudeColor || '#3a7bd5';
@@ -633,6 +766,31 @@ export class StudioController {
     this.container.querySelector('#studioScanlinesCheck').checked = layer.scanlines ?? true;
     this.container.querySelector('#studioBloomCheck').checked = layer.bloom ?? true;
     this.container.querySelector('#studioShadowCheck').checked = layer.shadow ?? true;
+
+    // ASCII Stream Engine values
+    const asciiEngineCheck = this.container.querySelector('#studioAsciiEngineCheck');
+    if (asciiEngineCheck) asciiEngineCheck.checked = layer.asciiEngineMode ?? (this.comp.asciiEngineMode ?? true);
+
+    const charSetSelect = this.container.querySelector('#studioCharSet');
+    if (charSetSelect) charSetSelect.value = layer.charSet || this.comp.charSet || 'standard';
+
+    const customCharWrap = this.container.querySelector('#studioCustomCharWrap');
+    if (customCharWrap) customCharWrap.style.display = (charSetSelect?.value === 'custom') ? 'block' : 'none';
+
+    const customCharInput = this.container.querySelector('#studioCustomChars');
+    if (customCharInput) customCharInput.value = layer.customChars || this.comp.customChars || '';
+
+    const colorModeSelect = this.container.querySelector('#studioColorMode');
+    if (colorModeSelect) colorModeSelect.value = layer.colorMode || this.comp.colorMode || 'truecolor';
+
+    const ditheringSelect = this.container.querySelector('#studioDithering');
+    if (ditheringSelect) ditheringSelect.value = layer.dithering || this.comp.dithering || 'none';
+
+    const edgeCheck = this.container.querySelector('#studioEdgeDetectCheck');
+    if (edgeCheck) edgeCheck.checked = layer.enableEdgeDetection ?? (this.comp.enableEdgeDetection ?? true);
+
+    const invertCheck = this.container.querySelector('#studioInvertCharsCheck');
+    if (invertCheck) invertCheck.checked = Boolean(layer.invertChars ?? this.comp.invertChars);
 
     // Presets active class
     const presetGrid = this.container.querySelector('#studioPresetGrid');
