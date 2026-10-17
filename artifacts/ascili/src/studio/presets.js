@@ -32,13 +32,13 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
   const result = {
     opacity: 1.0,
     transform: {
-      posX: layer.posX || 0,
-      posY: layer.posY || 0,
-      posZ: layer.posZ || 0,
-      rotX: layer.rotX || 0,
-      rotY: layer.rotY || 0,
-      rotZ: layer.rotZ || 0,
-      scale: layer.scale || 1.0,
+      posX: 0,
+      posY: 0,
+      posZ: 0,
+      rotX: 0,
+      rotY: 0,
+      rotZ: 0,
+      scale: 1.0,
     },
     lighting: {
       lightDirX: layer.lightDirX ?? 0.5,
@@ -116,7 +116,7 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
 
     // 4. 3D Zoom Out: starts centered and recedes into infinite distance
     case 'zoomOut': {
-      const zOffset = lerp(0, -900, easedT);
+      const zOffset = lerp(0, 1200, easedT);
       result.transform.posZ += zOffset;
       result.opacity = clamp((1.0 - scaledT) * 2.0, 0, 1.0);
       result.transform.rotX += lerp(0, 25, easedT);
@@ -165,7 +165,7 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
         }
       } else {
         result.opacity = clamp(1.0 - progress * 1.2, 0, 1.0);
-        result.transform.posZ += progress * -350;
+        result.transform.posZ += progress * 350;
       }
       break;
     }
@@ -267,7 +267,7 @@ export function evaluatePreset(presetName, layer, t, layerTime, totalDuration) {
     case 'fadeOut': {
       result.opacity = clamp(1.0 - easedT, 0, 1.0);
       result.transform.scale *= lerp(1.0, 0.85, easedT);
-      result.transform.posZ += lerp(0, -250, easedT);
+      result.transform.posZ += lerp(0, 250, easedT);
       break;
     }
 

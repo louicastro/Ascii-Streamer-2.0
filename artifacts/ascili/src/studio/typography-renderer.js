@@ -358,6 +358,15 @@ export function getWrappedLines(ctx, text, maxWidth, fontKey) {
 }
 
 /**
+ * Projects a local 3D voxel coordinate into 2D canvas coordinates using layer and character 3D transforms.
+ */
+function projectVoxelPoint(rotMatrix, charLx, charLy, charLz, cellLx, cellLy, cellLz, posX, posY, posZ, originX, originY, fov, cameraZ) {
+  const ptCell = transformPoint(rotMatrix, cellLx, cellLy, cellLz);
+  const ptChar = transformPoint(rotMatrix, charLx, charLy, charLz);
+  return project3D(ptChar.x + ptCell.x + posX, ptChar.y + ptCell.y + posY, ptChar.z + ptCell.z + posZ, originX, originY, fov, cameraZ);
+}
+
+/**
  * Render a single frame of the 3D ASCII Studio composition.
  *
  * @param {object} comp - Composition model
@@ -524,8 +533,8 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
   const hashPattern = getHashPattern(ctx, frontGlyph, litFrontColor, glyphDensity);
   const effectiveSlices = isLongText ? 3 : Math.min(slices, 24);
 
-  // ─── Short Text: True 3D ASCII Typography (Discrete Grid & Per-Character charStates) ───
-  if (!isLongText && lines.length <= 4) {
+  // ─── True 3D ASCII Typography (Discrete Voxel Grid & Per-Character charStates) ───
+  if (!isLongText && lines.length <= 8 && text.length <= 300) {
     const cellW = glyphDensity === 'fine' ? Math.max(3, Math.round(fontSize / 9.5))
                 : glyphDensity === 'coarse' ? Math.max(5, Math.round(fontSize / 5.5))
                 : Math.max(4, Math.round(fontSize / 7.2));
@@ -577,7 +586,7 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
         const charOx = cs?.ox || 0;
         const charOy = cs?.oy || 0;
         const charOz = cs?.oz || 0;
-        const charScale = (cs?.scale ?? 1.0) * baseScale;
+        const charScale = cs?.scale ?? 1.0;
         const charColor = cs?.color || null;
 
         // Combine local character rotation with layer Euler matrix
@@ -610,7 +619,7 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
     if (depth > 0) {
       for (let s = 0; s < effectiveSlices; s++) {
         const sliceFrac = s / effectiveSlices;
-        const sliceDepth = -depth * (1.0 - sliceFrac);
+        const sliceDepth = depth * (1.0 - sliceFrac);
 
         for (const item of charItems) {
           const sliceColor = item.color || lerpColor('#05070f', extrudeColor, sliceFrac * 0.95);
@@ -655,13 +664,6 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
               const glyph = (cell.isTop || cell.isBottom) ? '=' : (cell.isLeft || cell.isRight ? '/' : frontGlyph);
               ctx.fillText(glyph, proj.x, proj.y);
             }
-
-            // Slice contour wireframe ring
-            ctx.strokeStyle = sliceColor;
-            ctx.lineWidth = 1;
-            const outlineFont = `${fontWeight} ${Math.max(1, Math.round(fontSize * centerProj.scale * item.scale))}px ${fontFamily}`;
-            ctx.font = outlineFont;
-            ctx.strokeText(item.char, centerProj.x, centerProj.y);
           }
 
           ctx.restore();
@@ -713,13 +715,68 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
           ctx.fillText(frontGlyph, proj.x, proj.y);
         }
 
-        // Crisp CAD/blueprint wireframe contour outline
+        // Crisp CAD/blueprint 3D wireframe contour (built from projected 3D cell boundaries)
         if (isWireframe) {
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
           ctx.strokeStyle = wireframeColor;
           ctx.lineWidth = outlineWidth;
-          const outlineFont = `${fontWeight} ${Math.max(1, Math.round(fontSize * centerProj.scale * item.scale))}px ${fontFamily}`;
-          ctx.font = outlineFont;
-          ctx.strokeText(item.char, centerProj.x, centerProj.y);
+          ctx.beginPath();
+
+          const hw = (cellW / 2) * item.scale;
+          const hh = (cellH / 2) * item.scale;
+
+          for (const cell of item.grid.cells) {
+            if (!cell.isTop && !cell.isBottom && !cell.isLeft && !cell.isRight) continue;
+
+            const clx = (cell.relX !== undefined ? cell.relX : (cell.gx - item.grid.cols / 2 + 0.5) * cellW) * item.scale;
+            const cly = (cell.relY !== undefined ? cell.relY : (cell.gy - item.grid.rows / 2 + 0.5) * cellH) * item.scale;
+
+            const pTL = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx - hw, cly - hh, 0, posX, posY, posZ, originX, originY, fov, cameraZ);
+            const pTR = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx + hw, cly - hh, 0, posX, posY, posZ, originX, originY, fov, cameraZ);
+            const pBL = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx - hw, cly + hh, 0, posX, posY, posZ, originX, originY, fov, cameraZ);
+            const pBR = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx + hw, cly + hh, 0, posX, posY, posZ, originX, originY, fov, cameraZ);
+
+            if (pTL.scale <= 0 || pTR.scale <= 0 || pBL.scale <= 0 || pBR.scale <= 0) continue;
+
+            if (cell.isTop) {
+              ctx.moveTo(pTL.x, pTL.y);
+              ctx.lineTo(pTR.x, pTR.y);
+            }
+            if (cell.isBottom) {
+              ctx.moveTo(pBL.x, pBL.y);
+              ctx.lineTo(pBR.x, pBR.y);
+            }
+            if (cell.isLeft) {
+              ctx.moveTo(pTL.x, pTL.y);
+              ctx.lineTo(pBL.x, pBL.y);
+            }
+            if (cell.isRight) {
+              ctx.moveTo(pTR.x, pTR.y);
+              ctx.lineTo(pBR.x, pBR.y);
+            }
+
+            // Depth extrusion connecting lines on corners
+            if (depth > 0) {
+              if (cell.isTop && cell.isLeft) {
+                const bTL = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx - hw, cly - hh, depth, posX, posY, posZ, originX, originY, fov, cameraZ);
+                if (bTL.scale > 0) { ctx.moveTo(pTL.x, pTL.y); ctx.lineTo(bTL.x, bTL.y); }
+              }
+              if (cell.isTop && cell.isRight) {
+                const bTR = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx + hw, cly - hh, depth, posX, posY, posZ, originX, originY, fov, cameraZ);
+                if (bTR.scale > 0) { ctx.moveTo(pTR.x, pTR.y); ctx.lineTo(bTR.x, bTR.y); }
+              }
+              if (cell.isBottom && cell.isLeft) {
+                const bBL = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx - hw, cly + hh, depth, posX, posY, posZ, originX, originY, fov, cameraZ);
+                if (bBL.scale > 0) { ctx.moveTo(pBL.x, pBL.y); ctx.lineTo(bBL.x, bBL.y); }
+              }
+              if (cell.isBottom && cell.isRight) {
+                const bBR = projectVoxelPoint(rotMatrix, charLx, charLy, charLz, clx + hw, cly + hh, depth, posX, posY, posZ, originX, originY, fov, cameraZ);
+                if (bBR.scale > 0) { ctx.moveTo(pBR.x, pBR.y); ctx.lineTo(bBR.x, bBR.y); }
+              }
+            }
+          }
+          ctx.stroke();
         }
       }
 
@@ -730,7 +787,7 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
     if (depth > 0) {
       for (let s = 0; s < effectiveSlices; s++) {
         const sliceFrac = s / effectiveSlices;
-        const sliceDepth = -depth * (1.0 - sliceFrac);
+        const sliceDepth = depth * (1.0 - sliceFrac);
         const sliceColor = lerpColor('#05070f', extrudeColor, sliceFrac * 0.9);
         const sliceOpacity = opacity * (0.35 + 0.65 * sliceFrac);
         const diagPattern = getDiagPattern(ctx, sliceColor, hatchStyle, glyphDensity);
@@ -762,10 +819,6 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
 
           ctx.fillStyle = diagPattern || sliceColor;
           ctx.fillText(lineText, currentX, proj.y);
-
-          ctx.strokeStyle = sliceColor;
-          ctx.lineWidth = 1;
-          ctx.strokeText(lineText, currentX, proj.y);
         }
 
         ctx.restore();
