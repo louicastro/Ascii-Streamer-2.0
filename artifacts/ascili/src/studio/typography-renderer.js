@@ -11,6 +11,7 @@ import { AsciliEngine, CHAR_SETS } from '../engine.js';
 import {
   degToRad,
   createRotationMatrix,
+  multiplyMatrices3x3,
   transformPoint,
   project3D,
   calculateSurfaceLight,
@@ -21,6 +22,164 @@ import {
   applyEasing,
 } from './3d-math.js';
 import { evaluatePreset } from './presets.js';
+
+// Offscreen sampling canvas for text mask extraction
+let _maskCanvas = null;
+let _maskCtx = null;
+
+function getMaskCanvas(w, h) {
+  if (!_maskCanvas && typeof document !== 'undefined') {
+    _maskCanvas = document.createElement('canvas');
+    _maskCtx = _maskCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (_maskCanvas && (_maskCanvas.width !== w || _maskCanvas.height !== h)) {
+    _maskCanvas.width = Math.max(1, w);
+    _maskCanvas.height = Math.max(1, h);
+  }
+  return { canvas: _maskCanvas, ctx: _maskCtx };
+}
+
+// Cache for sampled 2D character voxel grids
+const _charGridCache = new Map();
+
+/**
+ * Samples a font character into an authentic 2D ASCII voxel grid.
+ * Returns { cols, rows, cells: [{ gx, gy, isTop, isBottom, isLeft, isRight }], width, height }
+ */
+export function getSampledCharGrid(ch, fontFamily, fontSize, fontWeight, cellW, cellH) {
+  const cacheKey = `${ch}:${fontFamily}:${fontSize}:${fontWeight}:${cellW}:${cellH}`;
+  if (_charGridCache.has(cacheKey)) {
+    return _charGridCache.get(cacheKey);
+  }
+  if (_charGridCache.size > 250) _charGridCache.clear();
+
+  if (typeof document === 'undefined' || !ch || ch === ' ') {
+    // Deterministic fallback grid for headless environments
+    const cells = [
+      { gx: 0, gy: 0, isTop: true, isBottom: false, isLeft: true, isRight: false },
+      { gx: 1, gy: 0, isTop: true, isBottom: false, isLeft: false, isRight: false },
+      { gx: 2, gy: 0, isTop: true, isBottom: false, isLeft: false, isRight: true },
+      { gx: 0, gy: 1, isTop: false, isBottom: false, isLeft: true, isRight: false },
+      { gx: 2, gy: 1, isTop: false, isBottom: false, isLeft: false, isRight: true },
+      { gx: 0, gy: 2, isTop: false, isBottom: false, isLeft: true, isRight: false },
+      { gx: 1, gy: 2, isTop: false, isBottom: false, isLeft: false, isRight: false },
+      { gx: 2, gy: 2, isTop: false, isBottom: false, isLeft: false, isRight: true },
+      { gx: 0, gy: 3, isTop: false, isBottom: false, isLeft: true, isRight: false },
+      { gx: 2, gy: 3, isTop: false, isBottom: false, isLeft: false, isRight: true },
+      { gx: 0, gy: 4, isTop: false, isBottom: true, isLeft: true, isRight: false },
+      { gx: 2, gy: 4, isTop: false, isBottom: true, isLeft: false, isRight: true },
+    ];
+    const fallbackGrid = { cols: 3, rows: 5, cells, width: 3 * cellW, height: 5 * cellH };
+    _charGridCache.set(cacheKey, fallbackGrid);
+    return fallbackGrid;
+  }
+
+  const estW = Math.max(cellW * 4, Math.round(fontSize * 1.6));
+  const estH = Math.max(cellH * 4, Math.round(fontSize * 1.6));
+  const { canvas, ctx } = getMaskCanvas(estW, estH);
+  if (!ctx) {
+    const emptyGrid = { cols: 1, rows: 1, cells: [], width: estW, height: estH };
+    return emptyGrid;
+  }
+
+  ctx.clearRect(0, 0, estW, estH);
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  const centerX = estW / 2;
+  const centerY = estH / 2;
+  ctx.fillText(ch, centerX, centerY);
+
+  let imgData;
+  try {
+    imgData = ctx.getImageData(0, 0, estW, estH);
+  } catch {
+    const emptyGrid = { cols: 1, rows: 1, cells: [], width: estW, height: estH };
+    return emptyGrid;
+  }
+
+  const pixels = imgData.data;
+
+  // Find bounding box of non-zero alpha
+  let minX = estW, maxX = 0, minY = estH, maxY = 0;
+  for (let y = 0; y < estH; y++) {
+    for (let x = 0; x < estW; x++) {
+      const a = pixels[(y * estW + x) * 4 + 3];
+      if (a > 60) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (minX > maxX || minY > maxY) {
+    const emptyGrid = { cols: 1, rows: 1, cells: [], width: cellW * 3, height: cellH * 4 };
+    _charGridCache.set(cacheKey, emptyGrid);
+    return emptyGrid;
+  }
+
+  const boxW = (maxX - minX + 1);
+  const boxH = (maxY - minY + 1);
+  const cols = Math.max(1, Math.ceil(boxW / cellW));
+  const rows = Math.max(1, Math.ceil(boxH / cellH));
+
+  const occupied = new Set();
+  for (let gy = 0; gy < rows; gy++) {
+    for (let gx = 0; gx < cols; gx++) {
+      const startX = minX + gx * cellW;
+      const startY = minY + gy * cellH;
+
+      let sumA = 0;
+      let count = 0;
+      for (let dy = 0; dy < cellH; dy++) {
+        for (let dx = 0; dx < cellW; dx++) {
+          const px = startX + dx;
+          const py = startY + dy;
+          if (px < estW && py < estH) {
+            sumA += pixels[(py * estW + px) * 4 + 3];
+            count++;
+          }
+        }
+      }
+
+      const coverage = count > 0 ? (sumA / count) : 0;
+      if (coverage > 55) {
+        occupied.add(`${gx},${gy}`);
+      }
+    }
+  }
+
+  const cellGrid = [];
+  for (let gy = 0; gy < rows; gy++) {
+    for (let gx = 0; gx < cols; gx++) {
+      if (occupied.has(`${gx},${gy}`)) {
+        cellGrid.push({
+          gx,
+          gy,
+          isTop: !occupied.has(`${gx},${gy - 1}`),
+          isBottom: !occupied.has(`${gx},${gy + 1}`),
+          isLeft: !occupied.has(`${gx - 1},${gy}`),
+          isRight: !occupied.has(`${gx + 1},${gy}`),
+        });
+      }
+    }
+  }
+
+  const result = {
+    cols,
+    rows,
+    cells: cellGrid,
+    width: cols * cellW,
+    height: rows * cellH,
+  };
+
+  _charGridCache.set(cacheKey, result);
+  return result;
+}
 
 // Pattern cache for 3D ASCII hatching and glyph textures
 const _patternCache = new Map();
@@ -336,9 +495,11 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
   const hashPattern = getHashPattern(ctx, frontGlyph, litFrontColor, glyphDensity);
   const effectiveSlices = isLongText ? 3 : Math.min(slices, 24);
 
-  // ─── Short Text: High-Precision Per-Character 3D Projection & Extrusion ─────
+  // ─── Short Text: True 3D ASCII Typography (Discrete Grid & Per-Character charStates) ───
   if (!isLongText && lines.length <= 4) {
-    // Measure characters and calculate layout
+    const cellW = glyphDensity === 'fine' ? 8 : glyphDensity === 'coarse' ? 14 : 10;
+    const cellH = glyphDensity === 'fine' ? 12 : glyphDensity === 'coarse' ? 20 : 14;
+
     const charItems = [];
     let globalCharIdx = 0;
 
@@ -367,99 +528,164 @@ function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, durati
         const cx = curX + cw / 2;
         curX += cw;
 
-        // Check if character is revealed in typewriter / reveal presets
-        const isRevealed = !hasCharReveal || globalCharIdx < presetRes.visibleCharCount;
-        globalCharIdx++;
-        if (!isRevealed) continue;
+        const charIdx = globalCharIdx++;
+        const isRevealed = !hasCharReveal || charIdx < presetRes.visibleCharCount;
+        if (!isRevealed || ch === ' ') continue;
+
+        // Consume per-character animation states from presets (dissolve, scatter, glitch, wave, shatter, etc.)
+        const cs = (presetRes.charStates && presetRes.charStates[charIdx]) ? presetRes.charStates[charIdx] : null;
+
+        const charOpacity = (cs?.opacity ?? 1.0) * opacity;
+        if (charOpacity <= 0.001) continue;
+
+        const charToDraw = cs?.char ?? ch;
+        if (!charToDraw || charToDraw === ' ') continue;
+
+        const charOx = cs?.ox || 0;
+        const charOy = cs?.oy || 0;
+        const charOz = cs?.oz || 0;
+        const charScale = (cs?.scale ?? 1.0) * baseScale;
+        const charColor = cs?.color || null;
+
+        // Combine local character rotation with layer Euler matrix
+        let charRot = rotMatrix;
+        if (cs && (cs.rotX || cs.rotY || cs.rotZ)) {
+          const lRot = createRotationMatrix(degToRad(cs.rotX || 0), degToRad(cs.rotY || 0), degToRad(cs.rotZ || 0));
+          charRot = multiplyMatrices3x3(rotMatrix, lRot);
+        }
+
+        // Get sampled 2D ASCII voxel grid for this character
+        const grid = getSampledCharGrid(charToDraw, fontFamily, fontSize, fontWeight, cellW, cellH);
 
         charItems.push({
-          char: ch,
+          char: charToDraw,
           localX: cx,
           localY: lineYOffset,
+          ox: charOx,
+          oy: charOy,
+          oz: charOz,
+          scale: charScale,
+          opacity: charOpacity,
+          color: charColor,
+          rotMatrix: charRot,
+          grid,
         });
       }
     }
 
-    // 1. Render Extrusion Slices (Back to Front)
+    // 1. Render Extrusion Slices (Back to Front) with Discrete ASCII Glyphs
     if (depth > 0) {
       for (let s = 0; s < effectiveSlices; s++) {
         const sliceFrac = s / effectiveSlices;
         const sliceDepth = -depth * (1.0 - sliceFrac);
-        const sliceColor = lerpColor('#05070f', extrudeColor, sliceFrac * 0.95);
-        const sliceOpacity = opacity * (0.4 + 0.6 * sliceFrac);
-        const diagPattern = getDiagPattern(ctx, sliceColor, hatchStyle, glyphDensity);
-
-        ctx.save();
-        ctx.globalAlpha = sliceOpacity;
-        ctx.textAlign = 'center';
-
-        if (layer.shadow && s === 0) {
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-          ctx.shadowBlur = 24;
-          ctx.shadowOffsetX = 8;
-          ctx.shadowOffsetY = 12;
-        }
 
         for (const item of charItems) {
-          const pt3D = transformPoint(rotMatrix, item.localX + posX, item.localY, posZ + sliceDepth);
-          if (pt3D.z <= -cameraZ + 1) continue;
+          const sliceColor = item.color || lerpColor('#05070f', extrudeColor, sliceFrac * 0.95);
+          const sliceOpacity = item.opacity * (0.4 + 0.6 * sliceFrac);
 
-          const proj = project3D(pt3D.x, pt3D.y, pt3D.z, originX, originY, fov, cameraZ);
-          if (proj.scale <= 0) continue;
+          ctx.save();
+          ctx.globalAlpha = sliceOpacity;
+          ctx.fillStyle = sliceColor;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
 
-          const renderedSize = Math.max(1, fontSize * proj.scale);
-          ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
+          // Center projection for slice
+          const centerPt = transformPoint(item.rotMatrix, 0, 0, sliceDepth);
+          const cWorldX = centerPt.x + item.localX + posX + item.ox;
+          const cWorldY = centerPt.y + item.localY + posY + item.oy;
+          const cWorldZ = centerPt.z + posZ + item.oz;
+          const centerProj = project3D(cWorldX, cWorldY, cWorldZ, originX, originY, fov, cameraZ);
 
-          // Fill slice with diagonal hatch pattern
-          ctx.fillStyle = diagPattern || sliceColor;
-          ctx.fillText(item.char, proj.x, proj.y);
+          if (centerProj.scale > 0) {
+            const curFontSize = Math.max(6, Math.round(cellH * centerProj.scale * item.scale));
+            ctx.font = `bold ${curFontSize}px monospace`;
 
-          // Stepped contour outline ring
-          ctx.strokeStyle = sliceColor;
-          ctx.lineWidth = 1;
-          ctx.strokeText(item.char, proj.x, proj.y);
+            for (const cell of item.grid.cells) {
+              // Deep slice optimization: draw boundary cells for side/top extrusion faces
+              if (!cell.isTop && !cell.isBottom && !cell.isLeft && !cell.isRight && s < effectiveSlices - 2) {
+                continue;
+              }
+
+              const cellLx = (cell.gx - item.grid.cols / 2 + 0.5) * cellW * item.scale;
+              const cellLy = (cell.gy - item.grid.rows / 2 + 0.5) * cellH * item.scale;
+              const ptCell = transformPoint(item.rotMatrix, cellLx, cellLy, sliceDepth);
+              const cellWorldX = ptCell.x + item.localX + posX + item.ox;
+              const cellWorldY = ptCell.y + item.localY + posY + item.oy;
+              const cellWorldZ = ptCell.z + posZ + item.oz;
+              const proj = project3D(cellWorldX, cellWorldY, cellWorldZ, originX, originY, fov, cameraZ);
+
+              if (proj.scale <= 0) continue;
+
+              const glyph = (cell.isTop || cell.isBottom) ? '=' : (cell.isLeft || cell.isRight ? '/' : frontGlyph);
+              ctx.fillText(glyph, proj.x, proj.y);
+            }
+
+            // Slice contour wireframe ring
+            ctx.strokeStyle = sliceColor;
+            ctx.lineWidth = 1;
+            const outlineFont = `${fontWeight} ${Math.max(1, Math.round(fontSize * centerProj.scale * item.scale))}px ${fontFamily}`;
+            ctx.font = outlineFont;
+            ctx.strokeText(item.char, centerProj.x, centerProj.y);
+          }
+
+          ctx.restore();
+        }
+      }
+    }
+
+    // 2. Render Front Face (z = 0) with Discrete '#' ASCII Grid
+    for (const item of charItems) {
+      ctx.save();
+      ctx.globalAlpha = item.opacity;
+      ctx.fillStyle = item.color || litFrontColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      const centerPt = transformPoint(item.rotMatrix, 0, 0, 0);
+      const cWorldX = centerPt.x + item.localX + posX + item.ox;
+      const cWorldY = centerPt.y + item.localY + posY + item.oy;
+      const cWorldZ = centerPt.z + posZ + item.oz;
+      const centerProj = project3D(cWorldX, cWorldY, cWorldZ, originX, originY, fov, cameraZ);
+
+      if (centerProj.scale > 0) {
+        if (frontLight > 0.7) {
+          ctx.shadowColor = highlightColor;
+          ctx.shadowBlur = Math.round(8 * centerProj.scale);
+        } else {
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
         }
 
-        ctx.restore();
+        const curFontSize = Math.max(7, Math.round(cellH * centerProj.scale * item.scale));
+        ctx.font = `bold ${curFontSize}px monospace`;
+
+        // Draw each discrete ASCII cell on the front face
+        for (const cell of item.grid.cells) {
+          const cellLx = (cell.gx - item.grid.cols / 2 + 0.5) * cellW * item.scale;
+          const cellLy = (cell.gy - item.grid.rows / 2 + 0.5) * cellH * item.scale;
+          const ptCell = transformPoint(item.rotMatrix, cellLx, cellLy, 0);
+          const cellWorldX = ptCell.x + item.localX + posX + item.ox;
+          const cellWorldY = ptCell.y + item.localY + posY + item.oy;
+          const cellWorldZ = ptCell.z + posZ + item.oz;
+          const proj = project3D(cellWorldX, cellWorldY, cellWorldZ, originX, originY, fov, cameraZ);
+
+          if (proj.scale <= 0) continue;
+
+          ctx.fillText(frontGlyph, proj.x, proj.y);
+        }
+
+        // Crisp CAD/blueprint wireframe contour outline
+        if (isWireframe) {
+          ctx.strokeStyle = wireframeColor;
+          ctx.lineWidth = outlineWidth;
+          const outlineFont = `${fontWeight} ${Math.max(1, Math.round(fontSize * centerProj.scale * item.scale))}px ${fontFamily}`;
+          ctx.font = outlineFont;
+          ctx.strokeText(item.char, centerProj.x, centerProj.y);
+        }
       }
+
+      ctx.restore();
     }
-
-    // 2. Render Front Face (z = 0)
-    ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.textAlign = 'center';
-
-    for (const item of charItems) {
-      const pt3D = transformPoint(rotMatrix, item.localX + posX, item.localY, posZ);
-      if (pt3D.z <= -cameraZ + 1) continue;
-
-      const proj = project3D(pt3D.x, pt3D.y, pt3D.z, originX, originY, fov, cameraZ);
-      if (proj.scale <= 0) continue;
-
-      const renderedSize = Math.max(1, fontSize * proj.scale);
-      ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
-
-      if (frontLight > 0.7) {
-        ctx.shadowColor = highlightColor;
-        ctx.shadowBlur = Math.round(8 * proj.scale);
-      } else {
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-      }
-
-      // Fill front face with dense '#' pattern
-      ctx.fillStyle = hashPattern || litFrontColor;
-      ctx.fillText(item.char, proj.x, proj.y);
-
-      // Crisp CAD/blueprint wireframe contour outline
-      if (isWireframe) {
-        ctx.strokeStyle = wireframeColor;
-        ctx.lineWidth = outlineWidth;
-        ctx.strokeText(item.char, proj.x, proj.y);
-      }
-    }
-
-    ctx.restore();
   } else {
     // ─── Long Multiline Text: Line-Based Frustum Culling ──────────────────────
     if (depth > 0) {

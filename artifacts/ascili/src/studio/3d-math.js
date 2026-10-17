@@ -77,6 +77,22 @@ export function createRotationMatrix(rotXRad, rotYRad, rotZRad) {
   ];
 }
 
+export function multiplyMatrices3x3(a, b) {
+  return [
+    a[0]*b[0] + a[3]*b[1] + a[6]*b[2],
+    a[1]*b[0] + a[4]*b[1] + a[7]*b[2],
+    a[2]*b[0] + a[5]*b[1] + a[8]*b[2],
+
+    a[0]*b[3] + a[3]*b[4] + a[6]*b[5],
+    a[1]*b[3] + a[4]*b[4] + a[7]*b[5],
+    a[2]*b[3] + a[5]*b[4] + a[8]*b[5],
+
+    a[0]*b[6] + a[3]*b[7] + a[6]*b[8],
+    a[1]*b[6] + a[4]*b[7] + a[7]*b[8],
+    a[2]*b[6] + a[5]*b[7] + a[8]*b[8],
+  ];
+}
+
 /**
  * Transforms a 3D point (x, y, z) using rotation matrix m.
  */

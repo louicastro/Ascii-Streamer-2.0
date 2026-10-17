@@ -47,8 +47,9 @@ export function computeExportDimensions(comp, resolutionKey = '1080p') {
 
 export class StudioVideoExporter {
   constructor() {
-    this._canvas = document.createElement('canvas');
+    this._canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
     this._recorder = null;
+    this._audioSrc = null;
     this._chunks = [];
     this._aborted = false;
     this._isRunning = false;
@@ -60,6 +61,10 @@ export class StudioVideoExporter {
 
   abort() {
     this._aborted = true;
+    if (this._audioSrc) {
+      try { this._audioSrc.stop(); } catch {}
+      this._audioSrc = null;
+    }
     if (this._recorder && this._recorder.state !== 'inactive') {
       try { this._recorder.stop(); } catch {}
     }
@@ -136,7 +141,7 @@ export class StudioVideoExporter {
     // Create stream from canvas at target FPS
     const stream = this._canvas.captureStream(fps);
 
-    // Mux audio if present
+    // Setup audio source if present (synchronized with recorder)
     if (opts.audioEngine && opts.audioEngine.audioData && opts.audioEngine.audioData.buffer) {
       try {
         const audioBuffer = opts.audioEngine.audioData.buffer;
@@ -145,7 +150,7 @@ export class StudioVideoExporter {
         const src = ctx.createBufferSource();
         src.buffer = audioBuffer;
         src.connect(dest);
-        src.start(0);
+        this._audioSrc = src;
 
         const audioTracks = dest.stream.getAudioTracks();
         if (audioTracks.length > 0) {
@@ -197,11 +202,20 @@ export class StudioVideoExporter {
 
     recorder.start(100);
 
+    // Synchronize audio playback start precisely with recording
+    if (this._audioSrc) {
+      try {
+        this._audioSrc.start(0);
+      } catch (err) {
+        console.warn('[StudioExporter] Audio start warning:', err);
+      }
+    }
+
     const startTimeWall = performance.now();
     const frameIntervalMs = 1000 / fps;
     const compToRender = { ...comp, width, height };
 
-    // Render frame-by-frame with precise wall-clock pacing synchronized with MediaRecorder
+    // Render frame-by-frame with deterministic pacing synchronized with MediaRecorder
     try {
       for (let frame = 0; frame < totalFrames; frame++) {
         if (this._aborted) break;
@@ -216,7 +230,7 @@ export class StudioVideoExporter {
           forceRenderAll: false,
         });
 
-        // Request frame capture
+        // Request deterministic frame capture
         if (stream.getVideoTracks()[0]?.requestFrame) {
           stream.getVideoTracks()[0].requestFrame();
         }
@@ -228,10 +242,18 @@ export class StudioVideoExporter {
 
         opts.onProgress?.(pct, frame + 1, totalFrames, elapsed, eta);
 
-        // Precise frame pacing
+        // Precise wall-clock frame pacing to eliminate audio/video drift
         const nextFrameTargetMs = startTimeWall + (frame + 1) * frameIntervalMs;
-        const delay = Math.max(1, Math.round(nextFrameTargetMs - performance.now()));
-        await new Promise((r) => setTimeout(r, delay));
+        const delay = Math.max(0, Math.round(nextFrameTargetMs - performance.now()));
+        if (delay > 0) {
+          await new Promise((r) => setTimeout(r, delay));
+        }
+      }
+
+      // Cleanly stop audio source
+      if (this._audioSrc) {
+        try { this._audioSrc.stop(); } catch {}
+        this._audioSrc = null;
       }
 
       // Finish recording
