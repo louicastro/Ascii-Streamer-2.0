@@ -21,6 +21,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [✨ 3D ASCII Typography & Video Animation Studio](#-3d-ascii-typography--video-animation-studio)
 - [Key Features](#key-features)
   - [1. Real-Time ASCII Engine & Dithering](#1-real-time-ascii-engine--dithering)
   - [2. YouTube Captions (.ytt) Color ASCII Animation](#2-youtube-captions-ytt-color-ascii-animation)
@@ -51,6 +52,51 @@
 - **Client-Side Engine (`artifacts/ascili`)**: Zero-latency HTML5 Canvas/WebGL engine capable of transforming live webcam streams, screen recordings, and local video files into ASCII animations at up to 60 FPS in full 24-bit TrueColor or retro phosphor green.
 - **Backend API & Server (`artifacts/api-server`)**: Hardened Express 5 server providing unified static file serving, safe Single-Page Application (SPA) routing, CORS allowlists, sliding-window rate limiting, and health monitoring.
 - **Python Video Processing Engine (`ai_video_engine`)**: Server-side engine utilizing OpenCV, NumPy, and FastAPI for offline batch conversions, high-resolution rendering, and headless pipelines.
+
+---
+
+## ✨ 3D ASCII Typography & Video Animation Studio
+
+Ascii-Streamer 2.0 now includes a complete, professional, browser-based **3D ASCII Typography & Video Animation Editor** accessible directly via the topbar mode switcher `[✨ 3D ASCII Studio]`.
+
+### Workflow
+1. **Type Text Instantly**: Enter any lyrics, title, quote, or multiline text in the live editor. The 3D ASCII typography renders immediately without needing a video file upload or conversion button.
+2. **True 3D Extrusion & Perspective**: Adjust multi-slice depth extrusion, 3D Euler rotation angles (Pitch, Yaw, Roll), camera perspective FOV, and directional light shading.
+3. **20 Genuine Animation Presets**:
+   1. **Typewriter**: Character-by-character reveal with blinking terminal cursor.
+   2. **Character Reveal**: Matrix-style progressive glyph resolution.
+   3. **3D Zoom In**: Dynamic camera fly-in from deep distance toward the foreground.
+   4. **3D Zoom Out**: Recedes into deep perspective space.
+   5. **3D Tumbling Rotation**: Multi-axis rotation across X, Y, and Z.
+   6. **ASCII Dissolve**: Glyphs disintegrate into decaying ASCII noise particles.
+   7. **Particle Scatter**: Explosive 3D radial dispersion with random velocity vectors.
+   8. **Chromatic Glitch**: RGB channel displacement, line jitter, and bit noise.
+   9. **3D Sine Wave**: Harmonic spatial wave undulation rippling across letter coordinates.
+   10. **Fade In & Settle**: Smooth opacity rise with gentle landing.
+   11. **Fade Out**: Seamless fade into deep shadow.
+   12. **CRT Scanline Sweep**: Electron beam sweep revealing typography top-to-bottom.
+   13. **Neon Luminescence**: Breathing bloom radius and pulse modulation.
+   14. **Cinematic Reveal**: Dramatic directional lighting pass sweeping across extruded bevels.
+   15. **Horizontal Sweep**: Left-to-right curtain wipe with ASCII spark edges.
+   16. **Matrix Vertical Cascade**: Top-to-bottom falling cascade with bounce settling.
+   17. **Radial Shockwave Ripple**: Expanding circular distortion shockwave.
+   18. **Polyhedral Shatter**: Text fragments into 3D polygonal shards tumbling with gravity.
+   19. **Digital Code Rain**: Cascading Katakana & ASCII streams resolving into words.
+   20. **Seamless 3D Loop**: Continuous harmonic figure-8 oscillation.
+4. **Visual Multi-Track Timeline**:
+   - Interactive time ruler with tenths-of-a-second and frame markers.
+   - Draggable playhead line supporting smooth scrub previewing.
+   - Multi-track clip blocks with start/end trimming handles.
+5. **Audio Synchronization & Beat Detection**:
+   - Load custom audio tracks (`.mp3`, `.wav`, `.ogg`).
+   - Waveform visualization directly in the timeline.
+   - Automatic transient beat detection with "Sync to Beat" scale and bloom pulsing.
+6. **Deterministic Frame-by-Frame Video Exporter**:
+   - Renders exact frames ($t = \text{frame} / \text{FPS}$) without dropped frames or CPU lag.
+   - Resolutions: 480p, 720p HD, 1080p Full HD, 1440p 2K, 4K Ultra HD.
+   - Frame rates: 24, 25, 30, 50, 60 FPS.
+   - Aspect ratios: 16:9 Landscape, 9:16 Shorts/Reels/TikTok, 1:1 Square, 4:5 Portrait, 4:3 Classic, 21:9 Ultrawide.
+   - Output formats: `.mp4` (H.264) and `.webm`.
 
 ---
 
