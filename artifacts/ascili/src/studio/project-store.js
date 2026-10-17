@@ -2,7 +2,7 @@
  * Project Store, Local Storage Autosave, JSON Import/Export, and Templates
  */
 
-import { createDefaultComposition, createDefaultLayer } from './types.js';
+import { ASPECT_RATIOS, createDefaultComposition, createDefaultLayer } from './types.js';
 
 const STORAGE_KEY = 'ascili_studio_autosave_v1';
 
@@ -137,8 +137,8 @@ export class StudioProjectStore {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.layers)) {
-        return parsed;
+      if (parsed && typeof parsed === 'object') {
+        return validateAndSanitizeProject(parsed);
       }
     } catch (e) {
       console.warn('[StudioProjectStore] Restore failed:', e);
@@ -160,10 +160,137 @@ export class StudioProjectStore {
 
   static async importFromJson(file) {
     const text = await file.text();
-    const data = JSON.parse(text);
-    if (!data || !Array.isArray(data.layers)) {
-      throw new Error('Invalid project file format: missing layers array.');
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error('Invalid JSON file format.');
     }
-    return data;
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid project file: root must be an object.');
+    }
+    return validateAndSanitizeProject(data);
   }
+}
+
+/**
+ * Strict schema validator and sanitizer for composition data
+ */
+export function validateAndSanitizeProject(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Invalid project: root must be a JSON object.');
+  }
+
+  const safeStr = (v, maxLen = 100, fallback = '') => {
+    if (typeof v !== 'string') return fallback;
+    return v.replace(/[<>]/g, '').slice(0, maxLen);
+  };
+
+  const safeNum = (v, min, max, fallback) => {
+    if (typeof v !== 'number' || !isFinite(v)) return fallback;
+    return Math.min(max, Math.max(min, v));
+  };
+
+  const safeColor = (c, fallback = '#ffffff') => {
+    if (typeof c === 'string' && (/^#[0-9a-fA-F]{3,8}$/.test(c) || /^rgba?\([0-9,.\s]+\)$/.test(c))) {
+      return c.slice(0, 40);
+    }
+    return fallback;
+  };
+
+  const duration = safeNum(raw.duration, 0.5, 600, 5.0);
+
+  const sanitized = {
+    id: safeStr(raw.id, 64, 'comp-' + Date.now()),
+    name: safeStr(raw.name, 100, 'Untitled 3D ASCII Animation'),
+    duration,
+    fps: safeNum(Math.round(raw.fps), 1, 120, 30),
+    aspectRatio: typeof raw.aspectRatio === 'string' && raw.aspectRatio in ASPECT_RATIOS ? raw.aspectRatio : '16:9',
+    width: safeNum((Math.round(raw.width) + 1) & ~1, 128, 4096, 1920),
+    height: safeNum((Math.round(raw.height) + 1) & ~1, 128, 4096, 1080),
+    currentTime: 0.0,
+    isPlaying: false,
+    loop: typeof raw.loop === 'boolean' ? raw.loop : true,
+    bgMode: ['black', 'transparent', 'custom'].includes(raw.bgMode) ? raw.bgMode : 'black',
+    bgColor: safeColor(raw.bgColor, '#060608'),
+    syncToBeat: Boolean(raw.syncToBeat),
+    zoom: 1.0,
+    layers: [],
+  };
+
+  if (!Array.isArray(raw.layers) || raw.layers.length === 0) {
+    sanitized.layers = [createDefaultLayer('layer-1', 'ASCII 3D STUDIO', 0, sanitized.duration)];
+    sanitized.selectedLayerId = sanitized.layers[0].id;
+    return sanitized;
+  }
+
+  sanitized.layers = raw.layers.slice(0, 50).map((l, idx) => {
+    if (!l || typeof l !== 'object') {
+      return createDefaultLayer(`layer-${idx + 1}`, 'Text Layer', 0, sanitized.duration);
+    }
+
+    const defaultL = createDefaultLayer(`layer-${idx + 1}`);
+
+    return {
+      id: safeStr(l.id, 64, `layer-${idx + 1}`),
+      name: safeStr(l.name, 50, 'Text Layer'),
+      text: typeof l.text === 'string' ? l.text.slice(0, 2000) : 'Text',
+      visible: typeof l.visible === 'boolean' ? l.visible : true,
+      locked: Boolean(l.locked),
+      startTime: safeNum(l.startTime, 0, sanitized.duration, 0),
+      duration: safeNum(l.duration, 0.1, sanitized.duration, sanitized.duration),
+
+      fontFamily: safeStr(l.fontFamily, 100, defaultL.fontFamily),
+      fontSize: safeNum(Math.round(l.fontSize), 8, 300, 58),
+      fontWeight: safeStr(l.fontWeight, 20, 'bold'),
+      lineHeight: safeNum(l.lineHeight, 0.5, 3.0, 1.25),
+      letterSpacing: safeNum(l.letterSpacing, -10, 50, 3),
+      textAlign: ['left', 'center', 'right'].includes(l.textAlign) ? l.textAlign : 'center',
+
+      posX: safeNum(l.posX, -4000, 4000, 0),
+      posY: safeNum(l.posY, -4000, 4000, 0),
+      posZ: safeNum(l.posZ, -4000, 4000, 0),
+      rotX: safeNum(l.rotX, -360, 360, 18),
+      rotY: safeNum(l.rotY, -360, 360, -22),
+      rotZ: safeNum(l.rotZ, -360, 360, 0),
+      scale: safeNum(l.scale, 0.05, 10, 1.0),
+
+      depth: safeNum(l.depth, 0, 200, 36),
+      slices: safeNum(Math.round(l.slices), 2, 40, 14),
+      perspective: safeNum(l.perspective, 100, 3000, 750),
+      cameraZ: safeNum(l.cameraZ, -2000, 2000, 0),
+
+      charSet: safeStr(l.charSet, 30, 'standard'),
+      customChars: safeStr(l.customChars, 100, ''),
+      invertChars: Boolean(l.invertChars),
+      charDensity: safeNum(l.charDensity, 0.1, 5, 1.0),
+      asciiTextureMode: typeof l.asciiTextureMode === 'boolean' ? l.asciiTextureMode : true,
+
+      frontColor: safeColor(l.frontColor, '#ffffff'),
+      extrudeColor: safeColor(l.extrudeColor, '#3a7bd5'),
+      highlightColor: safeColor(l.highlightColor, '#00ffff'),
+
+      lightDirX: safeNum(l.lightDirX, -1, 1, 0.5),
+      lightDirY: safeNum(l.lightDirY, -1, 1, -0.8),
+      lightDirZ: safeNum(l.lightDirZ, -1, 1, 0.9),
+      ambientLight: safeNum(l.ambientLight, 0, 1, 0.35),
+
+      scanlines: typeof l.scanlines === 'boolean' ? l.scanlines : true,
+      scanlineIntensity: safeNum(l.scanlineIntensity, 0, 1, 0.35),
+      bloom: typeof l.bloom === 'boolean' ? l.bloom : true,
+      bloomRadius: safeNum(l.bloomRadius, 1, 40, 10),
+      bloomIntensity: safeNum(l.bloomIntensity, 0, 2, 0.5),
+      shadow: typeof l.shadow === 'boolean' ? l.shadow : true,
+      glitchIntensity: safeNum(l.glitchIntensity, 0, 1, 0.0),
+
+      preset: safeStr(l.preset, 50, 'cinematicReveal'),
+      presetSpeed: safeNum(l.presetSpeed, 0.1, 5.0, 1.0),
+      presetEasing: safeStr(l.presetEasing, 50, 'easeInOutCubic'),
+      loop: Boolean(l.loop),
+      keyframes: [],
+    };
+  });
+
+  sanitized.selectedLayerId = sanitized.layers[0].id;
+  return sanitized;
 }

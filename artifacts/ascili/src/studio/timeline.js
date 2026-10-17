@@ -305,40 +305,54 @@ export class StudioTimeline {
     const duration = this.comp.duration || 5;
 
     this.comp.layers.forEach((layer) => {
-      // 1. Header
+      // 1. Header with safe DOM construction
       const headerItem = document.createElement('div');
       headerItem.className = `stl-track-header-item ${layer.id === this.comp.selectedLayerId ? 'active' : ''}`;
-      headerItem.innerHTML = `
-        <span class="stl-th-name" title="${layer.name}">${layer.name}</span>
-        <div class="stl-th-controls">
-          <button class="stl-th-btn stl-btn-vis" title="Toggle Visibility">
-            ${layer.visible ? '👁' : '👁‍🗨'}
-          </button>
-          <button class="stl-th-btn stl-btn-del" title="Delete Layer">✕</button>
-        </div>
-      `;
 
-      headerItem.querySelector('.stl-th-name').addEventListener('click', () => {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'stl-th-name';
+      nameSpan.textContent = String(layer.name || 'Text Layer');
+      nameSpan.setAttribute('title', String(layer.name || 'Text Layer'));
+
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'stl-th-controls';
+
+      const visBtn = document.createElement('button');
+      visBtn.className = 'stl-th-btn stl-btn-vis';
+      visBtn.setAttribute('title', 'Toggle Visibility');
+      visBtn.textContent = layer.visible ? '👁' : '👁‍🗨';
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'stl-th-btn stl-btn-del';
+      delBtn.setAttribute('title', 'Delete Layer');
+      delBtn.textContent = '✕';
+
+      controlsDiv.appendChild(visBtn);
+      controlsDiv.appendChild(delBtn);
+      headerItem.appendChild(nameSpan);
+      headerItem.appendChild(controlsDiv);
+
+      nameSpan.addEventListener('click', () => {
         this.comp.selectedLayerId = layer.id;
         this.render();
         this.callbacks.onLayerSelect?.(layer.id);
       });
 
-      headerItem.querySelector('.stl-btn-vis').addEventListener('click', (e) => {
+      visBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         layer.visible = !layer.visible;
         this.render();
         this.callbacks.onLayerChange?.();
       });
 
-      headerItem.querySelector('.stl-btn-del').addEventListener('click', (e) => {
+      delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.callbacks.onDeleteLayer?.(layer.id);
       });
 
       this.trackHeaders.appendChild(headerItem);
 
-      // 2. Track Row & Clip
+      // 2. Track Row & Clip with safe DOM construction
       const trackRow = document.createElement('div');
       trackRow.className = 'stl-track-row';
 
@@ -351,14 +365,29 @@ export class StudioTimeline {
       clipEl.style.left = `${leftPct}%`;
       clipEl.style.width = `${widthPct}%`;
 
-      clipEl.innerHTML = `
-        <div class="stl-clip-handle stl-handle-l"></div>
-        <div class="stl-clip-content">
-          <span class="stl-clip-title">${layer.text || layer.name}</span>
-          <span class="stl-clip-badge">${layer.preset}</span>
-        </div>
-        <div class="stl-clip-handle stl-handle-r"></div>
-      `;
+      const handleL = document.createElement('div');
+      handleL.className = 'stl-clip-handle stl-handle-l';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'stl-clip-content';
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'stl-clip-title';
+      titleSpan.textContent = String(layer.text || layer.name || 'Text');
+
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = 'stl-clip-badge';
+      badgeSpan.textContent = String(layer.preset || 'preset');
+
+      contentDiv.appendChild(titleSpan);
+      contentDiv.appendChild(badgeSpan);
+
+      const handleR = document.createElement('div');
+      handleR.className = 'stl-clip-handle stl-handle-r';
+
+      clipEl.appendChild(handleL);
+      clipEl.appendChild(contentDiv);
+      clipEl.appendChild(handleR);
 
       // Select clip on click
       clipEl.addEventListener('click', () => {

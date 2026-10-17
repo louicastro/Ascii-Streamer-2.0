@@ -1,7 +1,7 @@
 /**
  * 3D ASCII Typography Rasterizer
  * Renders 3D extruded text with Euler rotations, perspective camera, lighting normals,
- * CRT scanlines, bloom glow, and dense ASCII glyph patterns.
+ * true ASCII glyph-density surface texturing, CRT scanlines, and bloom glow.
  */
 
 import { CHAR_SETS } from '../engine.js';
@@ -29,8 +29,8 @@ function getBloomCanvas(w, h) {
     _bloomCtx = _bloomCanvas.getContext('2d');
   }
   if (_bloomCanvas.width !== w || _bloomCanvas.height !== h) {
-    _bloomCanvas.width = w;
-    _bloomCanvas.height = h;
+    _bloomCanvas.width = Math.max(1, w);
+    _bloomCanvas.height = Math.max(1, h);
   }
   return { canvas: _bloomCanvas, ctx: _bloomCtx };
 }
@@ -41,8 +41,8 @@ function getGlitchCanvas(w, h) {
     _glitchCtx = _glitchCanvas.getContext('2d');
   }
   if (_glitchCanvas.width !== w || _glitchCanvas.height !== h) {
-    _glitchCanvas.width = w;
-    _glitchCanvas.height = h;
+    _glitchCanvas.width = Math.max(1, w);
+    _glitchCanvas.height = Math.max(1, h);
   }
   return { canvas: _glitchCanvas, ctx: _glitchCtx };
 }
@@ -53,7 +53,7 @@ function getGlitchCanvas(w, h) {
  * @param {object} comp - Composition model
  * @param {number} time - Current playback time in seconds
  * @param {HTMLCanvasElement} canvas - Target output canvas
- * @param {object} [opts] - Additional rendering options (e.g. beatPulse, isExport)
+ * @param {object} [opts] - Additional rendering options (e.g. beatPulse, isExport, forceRenderAll)
  */
 export function renderStudioFrame(comp, time, canvas, opts = {}) {
   const width = comp.width || 1920;
@@ -95,24 +95,29 @@ export function renderStudioFrame(comp, time, canvas, opts = {}) {
     const duration = layer.duration || 5;
     const endTime = startTime + duration;
 
-    // Check if layer is active at this time
+    // Strict time interval enforcement during export or live playback
     if (time < startTime || time > endTime) {
-      // In live editing mode, if only one layer exists, preview it at clamp
-      if (comp.layers.length > 1 && !opts.forceRenderAll) continue;
+      if (opts.isExport || comp.isPlaying) {
+        continue;
+      }
+      // When paused in editor, only skip if there are other layers
+      if (comp.layers.length > 1 && !opts.forceRenderAll) {
+        continue;
+      }
     }
 
     const layerTime = clamp(time - startTime, 0, duration);
     const normT = duration > 0 ? clamp(layerTime / duration, 0, 1) : 0;
 
-    renderTextLayer(ctx, layer, normT, layerTime, duration, originX, originY, beatPulse, opts);
+    renderTextLayer(canvas, ctx, width, height, layer, normT, layerTime, duration, originX, originY, beatPulse, opts);
   }
 }
 
 /**
  * Render an individual 3D ASCII text layer.
  */
-function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, beatPulse, opts) {
-  // Preset evaluation
+function renderTextLayer(canvas, ctx, width, height, layer, t, layerTime, duration, originX, originY, beatPulse, opts) {
+  // Preset evaluation (speed is factored into t and layerTime)
   const presetRes = evaluatePreset(layer.preset || 'cinematicReveal', layer, t, layerTime, duration);
 
   const opacity = clamp((layer.opacity ?? 1.0) * (presetRes.opacity ?? 1.0), 0, 1);
@@ -163,7 +168,6 @@ function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, b
 
   // Per-line layout
   const lineLayouts = [];
-  const totalBlockHeight = lines.length * lineHeight;
   let globalCharIndex = 0;
 
   for (let li = 0; li < lines.length; li++) {
@@ -241,6 +245,11 @@ function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, b
   const frontNormal = transformPoint(rotMatrix, 0, 0, 1);
   const frontLight = calculateSurfaceLight(frontNormal.x, frontNormal.y, frontNormal.z, lightX, lightY, lightZ, ambient);
 
+  // Character set for ASCII texture rendering
+  const activeCharSet = (layer.customChars && layer.customChars.trim().length > 0)
+    ? layer.customChars
+    : (CHAR_SETS[layer.charSet] || CHAR_SETS.standard);
+
   // ─── 1. Extrusion Slices (Back to Front) ──────────────────────────────────
   if (depth > 0) {
     for (let s = 0; s < slices; s++) {
@@ -249,13 +258,30 @@ function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, b
 
       // Interpolate extrusion color toward dark shadow at the back
       const sliceColor = lerpColor('#040810', extrudeColor, sliceFrac * 0.9);
-      const sliceOpacity = opacity * (0.4 + 0.6 * sliceFrac);
+      const sliceOpacity = opacity * (0.35 + 0.65 * sliceFrac);
 
-      renderSlice(ctx, charWorldPositions, rotMatrix, sliceDepth, originX, originY, fov, cameraZ, fontSize, fontFamily, fontWeight, sliceColor, sliceOpacity, layer.shadow && s === 0);
+      renderSlice(
+        ctx,
+        charWorldPositions,
+        rotMatrix,
+        sliceDepth,
+        originX,
+        originY,
+        fov,
+        cameraZ,
+        fontSize,
+        fontFamily,
+        fontWeight,
+        sliceColor,
+        sliceOpacity,
+        layer.shadow && s === 0,
+        activeCharSet,
+        layer
+      );
     }
   }
 
-  // ─── 2. Front Face with High-Intensity Lighting & ASCII Glow ─────────────
+  // ─── 2. Front Face with High-Intensity Lighting & ASCII Glyph Shading ────
   renderFrontFace(
     ctx,
     charWorldPositions,
@@ -272,7 +298,8 @@ function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, b
     frontLight,
     opacity,
     layer,
-    presetRes
+    presetRes,
+    activeCharSet
   );
 
   // ─── 3. CRT Scanlines Pass ───────────────────────────────────────────────
@@ -298,7 +325,7 @@ function renderTextLayer(ctx, layer, t, layerTime, duration, originX, originY, b
 /**
  * Render a single extruded depth slice.
  */
-function renderSlice(ctx, charPositions, rotMatrix, sliceDepth, originX, originY, fov, cameraZ, fontSize, fontFamily, fontWeight, color, opacity, hasShadow) {
+function renderSlice(ctx, charPositions, rotMatrix, sliceDepth, originX, originY, fov, cameraZ, fontSize, fontFamily, fontWeight, color, opacity, hasShadow, charSet, layer) {
   ctx.save();
   ctx.fillStyle = color;
   ctx.globalAlpha = opacity;
@@ -309,6 +336,8 @@ function renderSlice(ctx, charPositions, rotMatrix, sliceDepth, originX, originY
     ctx.shadowOffsetX = 10;
     ctx.shadowOffsetY = 15;
   }
+
+  const useAsciiTexture = layer.asciiTextureMode !== false;
 
   for (const cp of charPositions) {
     if (cp.opacity <= 0 || cp.char === ' ') continue;
@@ -323,18 +352,33 @@ function renderSlice(ctx, charPositions, rotMatrix, sliceDepth, originX, originY
     ctx.font = `${fontWeight} ${renderedSize}px ${fontFamily}`;
 
     ctx.fillText(cp.char, proj.x, proj.y);
+
+    // ASCII texture edge reinforcement
+    if (useAsciiTexture && charSet && charSet.length > 0) {
+      const edgeCharIdx = Math.floor(clamp(-sliceDepth / Math.max(1, layer.depth || 36), 0, 1) * (charSet.length - 1));
+      const edgeGlyph = charSet[edgeCharIdx] || charSet[0];
+      if (edgeGlyph && edgeGlyph !== ' ') {
+        ctx.save();
+        ctx.font = `${Math.max(6, renderedSize * 0.35)}px 'Courier New', monospace`;
+        ctx.globalAlpha = opacity * 0.45;
+        ctx.fillStyle = color;
+        ctx.fillText(edgeGlyph, proj.x - renderedSize * 0.25, proj.y);
+        ctx.restore();
+      }
+    }
   }
   ctx.restore();
 }
 
 /**
- * Render the front face with specular highlights and per-character typography.
+ * Render the front face with specular highlights and authentic ASCII glyph density shading.
  */
-function renderFrontFace(ctx, charPositions, rotMatrix, originX, originY, fov, cameraZ, fontSize, fontFamily, fontWeight, frontColor, highlightColor, lightLevel, opacity, layer, presetRes) {
+function renderFrontFace(ctx, charPositions, rotMatrix, originX, originY, fov, cameraZ, fontSize, fontFamily, fontWeight, frontColor, highlightColor, lightLevel, opacity, layer, presetRes, charSet) {
   ctx.save();
 
   // Combine front face lighting
   const litFrontColor = lerpColor(frontColor, highlightColor, Math.max(0, lightLevel - 0.5) * 1.5);
+  const useAsciiTexture = layer.asciiTextureMode !== false && charSet && charSet.length > 0;
 
   for (const cp of charPositions) {
     if (cp.opacity <= 0 || cp.char === ' ') continue;
@@ -359,7 +403,27 @@ function renderFrontFace(ctx, charPositions, rotMatrix, originX, originY, fov, c
       ctx.shadowBlur = 0;
     }
 
+    // Base character glyph
     ctx.fillText(cp.char, proj.x, proj.y);
+
+    // True ASCII glyph density shading overlay
+    if (useAsciiTexture) {
+      ctx.save();
+      const densityScale = Math.max(8, renderedSize * 0.32);
+      ctx.font = `bold ${densityScale}px 'Courier New', monospace`;
+      ctx.textBaseline = 'middle';
+
+      // Pick ASCII character corresponding to local surface luminance
+      const charIdx = Math.floor(clamp(lightLevel, 0, 1) * (charSet.length - 1));
+      const glyph = charSet[charIdx] || charSet[charSet.length - 1];
+
+      if (glyph && glyph !== ' ') {
+        ctx.fillStyle = highlightColor;
+        ctx.globalAlpha = clamp(cp.opacity * opacity * (0.35 + lightLevel * 0.45), 0, 1);
+        ctx.fillText(glyph, proj.x, proj.y);
+      }
+      ctx.restore();
+    }
   }
 
   ctx.restore();
@@ -372,19 +436,22 @@ function applyScanlines(ctx, originX, originY, width, height, layer, presetRes) 
   const intensity = clamp(presetRes.lighting.scanlineIntensity ?? layer.scanlineIntensity ?? 0.35, 0, 1);
   if (intensity <= 0.01) return;
 
+  const w = width || ctx.canvas.width || 1920;
+  const h = height || ctx.canvas.height || 1080;
+
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = `rgba(0, 0, 0, ${intensity * 0.6})`;
 
   const step = 4; // Scanline spacing in pixels
-  for (let y = 0; y < height; y += step) {
-    ctx.fillRect(0, y, width, 1.5);
+  for (let y = 0; y < h; y += step) {
+    ctx.fillRect(0, y, w, 1.5);
   }
 
   // Subtle phosphor glow line
   ctx.fillStyle = `rgba(255, 255, 255, ${intensity * 0.08})`;
-  for (let y = 1; y < height; y += step) {
-    ctx.fillRect(0, y, width, 0.5);
+  for (let y = 1; y < h; y += step) {
+    ctx.fillRect(0, y, w, 0.5);
   }
 
   ctx.restore();
@@ -394,7 +461,11 @@ function applyScanlines(ctx, originX, originY, width, height, layer, presetRes) 
  * Fast two-pass Bloom & Glow Filter.
  */
 function applyBloom(ctx, canvas, width, height, intensity, radius, glowColor) {
-  const { canvas: bCanvas, ctx: bCtx } = getBloomCanvas(Math.round(width / 2), Math.round(height / 2));
+  if (!canvas) return;
+  const w = width || canvas.width || 1920;
+  const h = height || canvas.height || 1080;
+
+  const { canvas: bCanvas, ctx: bCtx } = getBloomCanvas(Math.round(w / 2), Math.round(h / 2));
   bCtx.clearRect(0, 0, bCanvas.width, bCanvas.height);
 
   // Downsample
@@ -405,12 +476,12 @@ function applyBloom(ctx, canvas, width, height, intensity, radius, glowColor) {
   ctx.globalCompositeOperation = 'screen';
   ctx.globalAlpha = clamp(intensity * 0.8, 0, 1);
   ctx.filter = `blur(${Math.round(radius)}px)`;
-  ctx.drawImage(bCanvas, 0, 0, width, height);
+  ctx.drawImage(bCanvas, 0, 0, w, h);
 
   // Second soft specular pass
   ctx.globalAlpha = clamp(intensity * 0.4, 0, 0.6);
   ctx.filter = `blur(${Math.round(radius * 2.2)}px)`;
-  ctx.drawImage(bCanvas, 0, 0, width, height);
+  ctx.drawImage(bCanvas, 0, 0, w, h);
 
   ctx.filter = 'none';
   ctx.restore();
@@ -420,8 +491,12 @@ function applyBloom(ctx, canvas, width, height, intensity, radius, glowColor) {
  * Chromatic aberration glitch pass: splits R and G/B channels horizontally.
  */
 function applyChromaticGlitch(ctx, canvas, width, height, glitchIntensity) {
-  const { canvas: gCanvas, ctx: gCtx } = getGlitchCanvas(width, height);
-  gCtx.clearRect(0, 0, width, height);
+  if (!canvas) return;
+  const w = width || canvas.width || 1920;
+  const h = height || canvas.height || 1080;
+
+  const { canvas: gCanvas, ctx: gCtx } = getGlitchCanvas(w, h);
+  gCtx.clearRect(0, 0, w, h);
   gCtx.drawImage(canvas, 0, 0);
 
   const shift = Math.round(glitchIntensity * 16);

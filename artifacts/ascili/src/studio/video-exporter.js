@@ -1,10 +1,49 @@
 /**
  * Deterministic Frame-by-Frame Video Exporter for 3D ASCII Typography
- * Produces crisp, drop-frame-free MP4 or WebM video exports at any resolution,
- * aspect ratio, and frame rate.
+ * Produces crisp MP4 (H.264) or WebM video exports at any selected resolution,
+ * aspect ratio, and frame rate with accurate frame pacing.
  */
 
 import { renderStudioFrame } from './typography-renderer.js';
+
+export function computeExportDimensions(comp, resolutionKey = '1080p') {
+  const resMap = {
+    '480p':  480,
+    '720p':  720,
+    '1080p': 1080,
+    '1440p': 1440,
+    '4k':    2160,
+  };
+
+  // If custom resolution is selected, preserve canvas dimensions directly
+  if (resolutionKey === 'custom') {
+    return {
+      width: (Math.round(comp.width || 1280) + 1) & ~1,
+      height: (Math.round(comp.height || 720) + 1) & ~1,
+    };
+  }
+
+  const baseH = resMap[resolutionKey] || 1080;
+  const ratio = (comp.width && comp.height && comp.height > 0)
+    ? comp.width / comp.height
+    : 16 / 9;
+
+  let targetW, targetH;
+  if (ratio >= 1.0) {
+    // Landscape or Square
+    targetH = baseH;
+    targetW = Math.round(targetH * ratio);
+  } else {
+    // Portrait (e.g. 9:16 vertical)
+    targetW = baseH;
+    targetH = Math.round(targetW / ratio);
+  }
+
+  return {
+    width: (targetW + 1) & ~1,
+    height: (targetH + 1) & ~1,
+  };
+}
 
 export class StudioVideoExporter {
   constructor() {
@@ -37,7 +76,8 @@ export class StudioVideoExporter {
    *   opts.format - 'mp4'|'webm'
    *   opts.audioEngine - StudioAudioEngine instance
    *   opts.onProgress(pct, currentFrame, totalFrames, elapsedSec, etaSec)
-   *   opts.onComplete(blob, downloadUrl, filename)
+   *   opts.onComplete(blob, downloadUrl, filename, meta)
+   *   opts.onNotice(message)
    *   opts.onError(err)
    */
   async exportVideo(comp, opts = {}) {
@@ -54,21 +94,19 @@ export class StudioVideoExporter {
     const duration = comp.duration || 5;
     const totalFrames = Math.max(1, Math.round(duration * fps));
 
-    // Calculate dimensions
-    const width = comp.width || 1920;
-    const height = comp.height || 1080;
-    this._canvas.width = (width + 1) & ~1; // Ensure even dimensions for H.264
-    this._canvas.height = (height + 1) & ~1;
+    // Calculate dimensions from selected resolution preset and aspect ratio
+    const { width, height } = computeExportDimensions(comp, opts.resolution);
+    this._canvas.width = width;
+    this._canvas.height = height;
 
-    // Pick best MIME type
+    // Pick best MIME type prioritizing requested format
     const preferredFormat = opts.format || 'mp4';
-    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
-
     let candidates;
-    if (preferredFormat === 'mp4' && !isLinux) {
+    if (preferredFormat === 'mp4') {
       candidates = [
         'video/mp4;codecs=avc1,mp4a.40.2',
         'video/mp4;codecs=avc1',
+        'video/mp4;codecs=h264',
         'video/mp4',
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
@@ -90,7 +128,12 @@ export class StudioVideoExporter {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
     }) || 'video/webm';
 
-    // Create stream from canvas
+    const actualIsMp4 = mimeType.includes('mp4');
+    if (preferredFormat === 'mp4' && !actualIsMp4) {
+      opts.onNotice?.('Note: Your browser does not support native MP4 MediaRecorder recording. Exporting as high-efficiency WebM video.');
+    }
+
+    // Create stream from canvas at target FPS
     const stream = this._canvas.captureStream(fps);
 
     // Mux audio if present
@@ -117,7 +160,7 @@ export class StudioVideoExporter {
     try {
       recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 16_000_000, // 16 Mbps for pro broadcast quality
+        videoBitsPerSecond: width >= 2560 ? 32_000_000 : 16_000_000,
       });
     } catch (err) {
       opts.onError?.(`MediaRecorder initialization failed: ${err.message}`);
@@ -133,13 +176,22 @@ export class StudioVideoExporter {
       }
     };
 
+    const ext = actualIsMp4 ? 'mp4' : 'webm';
+    const filename = `${comp.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_${width}x${height}_${fps}fps.${ext}`;
+
     const completionPromise = new Promise((resolve) => {
       recorder.onstop = () => {
-        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
         const finalBlob = new Blob(this._chunks, { type: mimeType });
         const url = URL.createObjectURL(finalBlob);
-        const filename = `${comp.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_${comp.aspectRatio.replace(':', 'x')}_${fps}fps.${ext}`;
-        resolve({ blob: finalBlob, url, filename });
+        resolve({
+          blob: finalBlob,
+          url,
+          filename,
+          width,
+          height,
+          fps,
+          format: ext,
+        });
       };
     });
 
@@ -147,8 +199,9 @@ export class StudioVideoExporter {
 
     const startTimeWall = performance.now();
     const frameIntervalMs = 1000 / fps;
+    const compToRender = { ...comp, width, height };
 
-    // Render frame-by-frame deterministically
+    // Render frame-by-frame with precise wall-clock pacing synchronized with MediaRecorder
     try {
       for (let frame = 0; frame < totalFrames; frame++) {
         if (this._aborted) break;
@@ -156,14 +209,14 @@ export class StudioVideoExporter {
         const frameTime = frame / fps;
         const beatPulse = opts.audioEngine ? opts.audioEngine.getBeatPulse(frameTime) : 0;
 
-        // Render to canvas
-        renderStudioFrame(comp, frameTime, this._canvas, {
+        // Render to canvas at exact target resolution and enforce clip bounds
+        renderStudioFrame(compToRender, frameTime, this._canvas, {
           beatPulse,
           isExport: true,
           forceRenderAll: false,
         });
 
-        // Request keyframe or canvas draw on track
+        // Request frame capture
         if (stream.getVideoTracks()[0]?.requestFrame) {
           stream.getVideoTracks()[0].requestFrame();
         }
@@ -175,8 +228,10 @@ export class StudioVideoExporter {
 
         opts.onProgress?.(pct, frame + 1, totalFrames, elapsed, eta);
 
-        // Yield execution to allow MediaRecorder to process encoded frames without stalling
-        await new Promise((r) => setTimeout(r, Math.min(20, frameIntervalMs * 0.5)));
+        // Precise frame pacing
+        const nextFrameTargetMs = startTimeWall + (frame + 1) * frameIntervalMs;
+        const delay = Math.max(1, Math.round(nextFrameTargetMs - performance.now()));
+        await new Promise((r) => setTimeout(r, delay));
       }
 
       // Finish recording
@@ -188,7 +243,12 @@ export class StudioVideoExporter {
       this._isRunning = false;
 
       if (!this._aborted) {
-        opts.onComplete?.(result.blob, result.url, result.filename);
+        opts.onComplete?.(result.blob, result.url, result.filename, {
+          width: result.width,
+          height: result.height,
+          fps: result.fps,
+          format: result.format,
+        });
       }
     } catch (err) {
       this._isRunning = false;

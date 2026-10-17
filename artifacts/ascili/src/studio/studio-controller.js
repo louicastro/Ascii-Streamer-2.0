@@ -123,9 +123,17 @@ export class StudioController {
         <!-- CENTER VIEWPORT: Canvas, Aspect Ratio, Safe Frames -->
         <main class="studio-viewport-area">
           <div class="studio-viewport-bar">
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <span style="color:#64748b; font-weight:700;">ASPECT RATIO:</span>
               <select class="studio-aspect-select" id="studioAspectSelect"></select>
+
+              <div id="studioCustomDimWrap" style="display:none; align-items:center; gap:6px; margin-left:6px;">
+                <span style="color:#94a3b8; font-size:11px; font-weight:600;">Custom:</span>
+                <input type="number" class="studio-num-input" id="studioCustomW" min="240" max="4096" step="2" value="1280" style="width:58px;" placeholder="W" title="Width (pixels)" />
+                <span style="color:#64748b;">×</span>
+                <input type="number" class="studio-num-input" id="studioCustomH" min="240" max="4096" step="2" value="720" style="width:58px;" placeholder="H" title="Height (pixels)" />
+                <button class="stl-btn stl-btn-sm" id="studioBtnApplyCustomDim" style="padding:2px 8px; font-size:11px;" title="Apply custom dimensions">Set</button>
+              </div>
             </div>
 
             <div style="display:flex; align-items:center; gap:12px;">
@@ -442,7 +450,34 @@ export class StudioController {
       }
     });
 
-    // Aspect Ratio
+    // Aspect Ratio & Custom Dimensions
+    const customW = this.container.querySelector('#studioCustomW');
+    const customH = this.container.querySelector('#studioCustomH');
+    const applyCustomDim = () => {
+      let w = parseInt(customW.value, 10);
+      let h = parseInt(customH.value, 10);
+      if (isNaN(w) || w < 240) w = 240;
+      if (w > 4096) w = 4096;
+      if (isNaN(h) || h < 240) h = 240;
+      if (h > 4096) h = 4096;
+      // enforce even dimensions for video codecs
+      w = (Math.round(w) + 1) & ~1;
+      h = (Math.round(h) + 1) & ~1;
+      customW.value = w;
+      customH.value = h;
+      this.comp.width = w;
+      this.comp.height = h;
+      this.mainCanvas.width = w;
+      this.mainCanvas.height = h;
+      this.canvasFrame.style.aspectRatio = `${w} / ${h}`;
+      this.container.querySelector('#studioDimBadge').textContent = `${w} × ${h}`;
+      this._saveAutosave();
+    };
+
+    customW?.addEventListener('change', applyCustomDim);
+    customH?.addEventListener('change', applyCustomDim);
+    this.container.querySelector('#studioBtnApplyCustomDim')?.addEventListener('click', applyCustomDim);
+
     this.aspectSelect.addEventListener('change', (e) => {
       this.comp.aspectRatio = e.target.value;
       this._updateAspectDimensions();
@@ -608,9 +643,24 @@ export class StudioController {
 
   _updateAspectDimensions() {
     const key = this.comp.aspectRatio || '16:9';
-    const info = ASPECT_RATIOS[key] || ASPECT_RATIOS['16:9'];
-    this.comp.width = info.defaultW;
-    this.comp.height = info.defaultH;
+    const customWrap = this.container.querySelector('#studioCustomDimWrap');
+    const customWInput = this.container.querySelector('#studioCustomW');
+    const customHInput = this.container.querySelector('#studioCustomH');
+
+    if (key === 'custom') {
+      if (customWrap) customWrap.style.display = 'inline-flex';
+      const w = Math.min(4096, Math.max(240, (Math.round(this.comp.width || 1280) + 1) & ~1));
+      const h = Math.min(4096, Math.max(240, (Math.round(this.comp.height || 720) + 1) & ~1));
+      this.comp.width = w;
+      this.comp.height = h;
+      if (customWInput) customWInput.value = w;
+      if (customHInput) customHInput.value = h;
+    } else {
+      if (customWrap) customWrap.style.display = 'none';
+      const info = ASPECT_RATIOS[key] || ASPECT_RATIOS['16:9'];
+      this.comp.width = info.defaultW;
+      this.comp.height = info.defaultH;
+    }
 
     this.mainCanvas.width = this.comp.width;
     this.mainCanvas.height = this.comp.height;
@@ -684,6 +734,7 @@ export class StudioController {
               <option value="1440p">1440p 2K</option>
               <option value="4k">4K Ultra HD</option>
               <option value="480p">480p Draft</option>
+              <option value="custom">Match Canvas Size (${this.comp.width} × ${this.comp.height})</option>
             </select>
 
             <label class="studio-label">Framerate</label>
@@ -693,6 +744,8 @@ export class StudioController {
               <option value="24">24 FPS (Cinematic Motion)</option>
             </select>
           </div>
+
+          <div id="studioExportNotice" style="display:none; margin-bottom:12px; color:#f59e0b; font-size:11px; line-height:1.4; padding:6px 8px; background:rgba(245,158,11,0.1); border-radius:4px; border:1px solid rgba(245,158,11,0.3);"></div>
 
           <div class="studio-export-progress-bar" id="studioExportBar" style="display:none;">
             <div class="studio-export-progress-fill" id="studioExportFill"></div>
@@ -750,12 +803,21 @@ export class StudioController {
       meta.style.display = 'flex';
 
       const format = modalRoot.querySelector('#studioExportFormat').value;
+      const resolution = modalRoot.querySelector('#studioExportResolution').value;
       const fps = parseInt(modalRoot.querySelector('#studioExportFps').value, 10);
 
       await this.videoExporter.exportVideo(this.comp, {
         fps,
         format,
+        resolution,
         audioEngine: this.audioEngine,
+        onNotice: (msg) => {
+          const noticeEl = modalRoot.querySelector('#studioExportNotice');
+          if (noticeEl) {
+            noticeEl.textContent = msg;
+            noticeEl.style.display = 'block';
+          }
+        },
         onProgress: (pct, frame, total, elapsed, eta) => {
           fill.style.width = `${pct}%`;
           pctLabel.textContent = `${pct}%`;
