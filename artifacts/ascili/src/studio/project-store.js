@@ -122,6 +122,7 @@ export const TEMPLATES = [
 export class StudioProjectStore {
   static saveToLocalStorage(comp) {
     try {
+      if (typeof localStorage === 'undefined') return;
       // Don't serialize heavy decoded audio buffers
       const toSave = { ...comp, audio: comp.audio ? { name: comp.audio.name, duration: comp.audio.duration } : null };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -132,6 +133,7 @@ export class StudioProjectStore {
 
   static loadFromLocalStorage() {
     try {
+      if (typeof localStorage === 'undefined') return null;
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);

@@ -39,6 +39,10 @@ export class StudioController {
   }
 
   get selectedLayer() {
+    if (!this.comp.layers || !this.comp.layers.length) {
+      this.comp.layers = [createDefaultLayer('layer-1', 'ASCII 3D STUDIO', 0, 5)];
+      this.comp.selectedLayerId = 'layer-1';
+    }
     return this.comp.layers.find((l) => l.id === this.comp.selectedLayerId) || this.comp.layers[0];
   }
 
@@ -130,6 +134,9 @@ export class StudioController {
                 <input type="checkbox" id="studioSyncBeatCheck" />
                 <span>Sync to Beat</span>
               </label>
+              <button class="stl-btn stl-btn-sm" id="studioBtnReturnToStreamer" style="color:#39ff52; border-color:rgba(57,255,82,0.4);" title="Switch back to Video Streamer">
+                📹 Streamer Mode
+              </button>
             </div>
           </div>
 
@@ -460,6 +467,13 @@ export class StudioController {
       this.selectedLayer.posZ = 0;
       this.selectedLayer.scale = 1.0;
       this._applyActiveLayerValues();
+    });
+
+    // Return to streamer
+    this.container.querySelector('#studioBtnReturnToStreamer')?.addEventListener('click', () => {
+      if (typeof window !== 'undefined' && typeof window.setAppMode === 'function') {
+        window.setAppMode('streamer');
+      }
     });
 
     // Save & Load Project

@@ -6,12 +6,16 @@
 .mode-switcher {
   display: flex;
   align-items: center;
-  background: rgba(18, 22, 28, 0.85);
-  border: 1px solid var(--border-subtle, #272d38);
+  background: rgba(10, 15, 22, 0.95);
+  border: 1px solid rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
   border-radius: 6px;
   padding: 2px;
-  margin-left: 14px;
-  gap: 2px;
+  margin-left: 10px;
+  gap: 3px;
+  flex-shrink: 0;
+  z-index: 100;
+  white-space: nowrap;
 }
 
 .mode-tab-btn {
@@ -19,8 +23,8 @@
   align-items: center;
   gap: 6px;
   background: transparent;
-  color: #8892a0;
-  border: none;
+  color: #94a3b8;
+  border: 1px solid transparent;
   font-family: inherit;
   font-size: 11px;
   font-weight: 600;
@@ -30,23 +34,31 @@
   transition: all 0.15s ease;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  user-select: none;
 }
 
 .mode-tab-btn:hover {
   color: #fff;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .mode-tab-btn.active {
   background: #1f2733;
   color: #39ff52;
-  box-shadow: 0 0 10px rgba(57, 255, 82, 0.2);
+  border-color: rgba(57, 255, 82, 0.5);
+  box-shadow: 0 0 10px rgba(57, 255, 82, 0.25);
+}
+
+.mode-tab-btn.studio-mode-active {
+  color: #00f0ff;
 }
 
 .mode-tab-btn.active.studio-mode-active {
+  background: #10283d;
   color: #00f0ff;
-  box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
-  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-color: #00f0ff;
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.4);
 }
 
 /* Studio Root Layout */
