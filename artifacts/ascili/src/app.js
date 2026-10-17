@@ -1,5 +1,5 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution } from './exporter.js';
+import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -53,6 +53,7 @@ const btnCopy       = $('btnCopy');
 const btnDownloadTxt  = $('btnDownloadTxt');
 const btnDownloadHtml = $('btnDownloadHtml');
 const btnScreenshot = $('btnScreenshot');
+const btnOpenExportModal = $('btnOpenExportModal');
 const mobileMenuBtn = $('mobileMenuBtn');
 const presetBar     = $('presetBar');
 
@@ -1361,6 +1362,7 @@ if (dlRecordVideo) {
   });
 }
 dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+btnOpenExportModal?.addEventListener('click', () => { openConverter(); });
 
 // ─── Video Converter ─────────────────────────────────────────────────────────
 
@@ -1742,16 +1744,21 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
 }
 
 function drawConverterPreview(videoEl, overrideCfg = null) {
-  if (!videoEl || !cvPreviewCanvas) return;
-  const vw = videoEl.videoWidth || videoEl.width;
-  const vh = videoEl.videoHeight || videoEl.height;
-  if (!vw || !vh) return;
+  try {
+    if (!videoEl || !cvPreviewCanvas) return;
+    const vw = videoEl.videoWidth || videoEl.width;
+    const vh = videoEl.videoHeight || videoEl.height;
+    if (!vw || !vh) return;
 
-  const baseCfg = overrideCfg || cfg;
-  const previewCols = Math.min(baseCfg.cols || 80, 240);
-  const previewFontSize = Math.max(6, Math.min(12, Math.round(540 / (previewCols * CHAR_W_FACTOR))));
-  const previewCfg = { ...baseCfg, cols: previewCols, fontSize: previewFontSize };
-  renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize });
+    const baseCfg = overrideCfg || cfg;
+    const previewCols = Math.min(baseCfg.cols || 80, 240);
+    const charWFactor = (typeof CHAR_W_FACTOR === 'number' && CHAR_W_FACTOR > 0) ? CHAR_W_FACTOR : 0.601;
+    const previewFontSize = Math.max(6, Math.min(12, Math.round(540 / (previewCols * charWFactor))));
+    const previewCfg = { ...baseCfg, cols: previewCols, fontSize: previewFontSize };
+    renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize });
+  } catch (err) {
+    console.warn('drawConverterPreview error:', err);
+  }
 }
 
 function cvRefreshSettings() {
@@ -1914,13 +1921,17 @@ function cvShowExportError(message) {
 function openConverter() {
   cvResetUI();
   cvRefreshSettings();
-  if (state.currentFile) {
-    cvSetFile(state.currentFile);
-  } else if (sourceVideo && sourceVideo.videoWidth) {
-    if (cvPreviewSection) cvPreviewSection.style.display = 'block';
-    drawConverterPreview(sourceVideo);
-  } else {
-    if (cvPreviewSection) cvPreviewSection.style.display = 'none';
+  try {
+    if (state.currentFile) {
+      cvSetFile(state.currentFile);
+    } else if (sourceVideo && sourceVideo.videoWidth) {
+      if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+      drawConverterPreview(sourceVideo);
+    } else {
+      if (cvPreviewSection) cvPreviewSection.style.display = 'none';
+    }
+  } catch (err) {
+    console.warn('Non-fatal error preparing converter preview:', err);
   }
   cvOverlay.classList.add('open');
   cvOverlay.setAttribute('aria-hidden', 'false');
@@ -2370,7 +2381,8 @@ document.addEventListener('keydown', e => {
     case 's': case 'S':
       e.preventDefault(); toggleSettings(); break;
     case 'c': case 'C':
-      e.preventDefault(); copyAsciiFrameToClipboard(); break;
+    case 'e': case 'E':
+      e.preventDefault(); openConverter(); break;
     case 'm': case 'M':
       e.preventDefault();
       if (btnMirror) btnMirror.click();

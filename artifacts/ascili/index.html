@@ -53,12 +53,16 @@
 
       <!-- Download dropdown -->
       <div class="dl-wrap" id="dlWrap">
-        <button class="source-btn dl-main-btn" id="btnDownload" data-testid="btn-download">
+        <button class="source-btn dl-main-btn" id="btnDownload" data-testid="btn-download" title="Export & Download (C)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download
+          Export
           <svg class="dl-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="dl-menu" id="dlMenu">
+          <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video" style="border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px; padding-bottom: 6px; font-weight: bold;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            Full Video & Subtitles Export…  <span class="dl-ext">(C)</span>
+          </button>
           <button class="dl-item" id="dlTxt" data-testid="dl-txt">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Plain Text  <span class="dl-ext">.txt</span>
@@ -82,10 +86,6 @@
           <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
             <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
             <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
-          </button>
-          <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-            Convert Full Video File  <span class="dl-ext">.mp4</span>
           </button>
         </div>
       </div>
@@ -297,6 +297,16 @@
           <div class="setting-row">
             <label class="setting-label">Edge Detection</label>
             <input class="setting-range" id="inputEdge" type="range" min="0" max="100" value="45" />
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="section-label">EXPORT &amp; SHARE</div>
+          <div class="setting-row">
+            <button class="source-btn" id="btnOpenExportModal" data-testid="btn-open-export" style="width: 100%; justify-content: center; padding: 9px 12px; font-weight: bold; background: var(--bg-hover); border: 1px solid var(--accent); color: var(--accent); cursor: pointer; border-radius: 4px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+              OPEN EXPORT WORKSTATION (C)
+            </button>
           </div>
         </div>
 
