@@ -911,6 +911,7 @@ export class AsciliSrtExporter {
     this.canvas = sample.canvas;
     const parts = [];
     const YTT_MAX_BYTES = 20 * 1024 * 1024; // Strict 20 MB ceiling for YouTube upload
+    let wasTruncated = false;
     let currentYttBytes = 0;
     let bufferedBytes = 0;
     let outputBytes = 0;
@@ -1370,6 +1371,7 @@ export class AsciliSrtExporter {
         cue = `  <p t="${startMs}" d="${durMs}" wp="1" ws="1">${bodyContent}</p>\n`;
         // Strictly prevent exceeding 20 MB ceiling (reserve 4096 bytes for closing tags)
         if (currentYttBytes + cue.length + 4096 >= YTT_MAX_BYTES) {
+          wasTruncated = true;
           finish();
           return;
         }
@@ -1419,11 +1421,11 @@ export class AsciliSrtExporter {
         if (this._writable) {
           await this._writable.close();
           this._writable = null;
-          onComplete?.(null, resultMime, { savedToDisk: true, cols, rows, format: formatName, fontSize });
+          onComplete?.(null, resultMime, { savedToDisk: true, cols, rows, format: formatName, fontSize, truncated: wasTruncated });
         } else {
           const blob = new Blob(parts, { type: resultMime });
           this._chunks = [];
-          onComplete?.(blob, resultMime, { savedToDisk: false, cols, rows, format: formatName, fontSize });
+          onComplete?.(blob, resultMime, { savedToDisk: false, cols, rows, format: formatName, fontSize, truncated: wasTruncated });
         }
       } catch (error) {
         try { await this._writable?.abort(); } catch {}

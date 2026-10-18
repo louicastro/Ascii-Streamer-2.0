@@ -8,6 +8,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
+app.set("trust proxy", 1);
 
 // 1. Security Headers Middleware (zero-dependency)
 app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -27,7 +28,7 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   }
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none';",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none';",
   );
   next();
 });

@@ -1,25 +1,7 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:16-alpine
-    container_name: ascii-streamer-db
-    environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-ascii_streamer}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Node.js API Server + React Frontend
+  # Node.js API Server + ASCILI Web Application
   api:
     build:
       context: .
@@ -29,27 +11,20 @@ services:
       - "3000:3000"
     environment:
       PORT: 3000
-      NODE_ENV: development
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-ascii_streamer}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./artifacts/api-server/src:/app/api-server/src
-      - ./artifacts/ascili/src:/app/ascili/src
-    command: pnpm run dev
+      NODE_ENV: production
+    restart: unless-stopped
 
-  # Python Video Engine (Optional - commented by default)
+  # Python Video Engine (Optional - uncomment to enable high-throughput Python backend)
   # python-engine:
   #   build:
   #     context: .
   #     dockerfile: Dockerfile.python
+  #   container_name: ascii-streamer-python
   #   ports:
   #     - "8000:8000"
   #   environment:
   #     PORT: 8000
   #   volumes:
   #     - ./ai_video_engine:/app/ai_video_engine
-
-volumes:
-  postgres_data:
+  #     - ./converted_videos:/app/converted_videos
+  #   restart: unless-stopped

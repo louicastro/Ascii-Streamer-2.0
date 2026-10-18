@@ -29,8 +29,37 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 # In-memory job repository
 JOBS: Dict[str, ConversionJob] = {}
+JOB_TIMESTAMPS: Dict[str, float] = {}
 OUTPUT_DIR = os.path.abspath("converted_videos")
+UPLOAD_DIR = os.path.abspath("uploaded_videos")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+
+def cleanup_old_jobs(max_age_seconds: float = 3600, max_jobs: int = 50):
+    """Automatically cleans up expired job records and files to avoid disk/RAM leaks."""
+    now = time.time()
+    to_delete = []
+    for j_id, ts in list(JOB_TIMESTAMPS.items()):
+        if (now - ts) > max_age_seconds or len(JOBS) > max_jobs:
+            to_delete.append(j_id)
+    for j_id in to_delete:
+        job = JOBS.pop(j_id, None)
+        JOB_TIMESTAMPS.pop(j_id, None)
+        if job:
+            if job.input_path and job.input_path.startswith(UPLOAD_DIR):
+                try:
+                    if os.path.exists(job.input_path):
+                        os.remove(job.input_path)
+                except Exception:
+                    pass
+            if job.output_path and job.output_path.startswith(OUTPUT_DIR):
+                try:
+                    if os.path.exists(job.output_path):
+                        os.remove(job.output_path)
+                except Exception:
+                    pass
 
 
 class AsciliServerHandler(BaseHTTPRequestHandler):
@@ -41,8 +70,24 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-API-Key, X-Filename")
         self.end_headers()
+
+    def _check_auth(self) -> bool:
+        required_key = os.environ.get("ASCILI_API_KEY")
+        if not required_key:
+            return True
+        auth_header = self.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            if token == required_key:
+                return True
+        api_key_header = self.headers.get("X-API-Key", "").strip()
+        if api_key_header == required_key:
+            return True
+        self._set_cors("application/json", status=401)
+        self.wfile.write(json.dumps({"error": "Unauthorized: Invalid or missing API key"}).encode("utf-8"))
+        return False
 
     def do_OPTIONS(self):
         self._set_cors()
@@ -172,23 +217,46 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"error": "Endpoint not found"}).encode("utf-8"))
 
     def do_POST(self):
+        if not self._check_auth():
+            return
+
+        cleanup_old_jobs()
+
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        # Cancellation endpoint: POST /api/job/<job_id>/cancel
+        if path.startswith("/api/job/") and path.endswith("/cancel"):
+            job_id = path.replace("/api/job/", "").replace("/cancel", "").strip()
+            job = JOBS.get(job_id)
+            if not job:
+                self._set_cors("application/json", status=404)
+                self.wfile.write(json.dumps({"error": f"Job {job_id} not found"}).encode("utf-8"))
+                return
+            job.should_cancel = True
+            job.progress.status = "cancelled"
+            self._set_cors("application/json")
+            self.wfile.write(json.dumps({"message": f"Job {job_id} cancellation requested"}).encode("utf-8"))
+            return
+
         # 0. Upload & Convert: /api/upload
         if path == "/api/upload":
-            filename = self.headers.get("X-Filename", "uploaded_video.mp4")
             content_len = int(self.headers.get("Content-Length", 0))
             if content_len == 0:
                 self._set_cors("application/json", status=400)
                 self.wfile.write(json.dumps({"error": "Empty upload body"}).encode("utf-8"))
                 return
+            if content_len > MAX_UPLOAD_SIZE:
+                self._set_cors("application/json", status=413)
+                self.wfile.write(json.dumps({
+                    "error": f"Upload exceeds maximum allowed size ({MAX_UPLOAD_SIZE // (1024*1024)} MB)"
+                }).encode("utf-8"))
+                return
 
-            upload_dir = os.path.abspath("uploaded_videos")
-            os.makedirs(upload_dir, exist_ok=True)
+            filename = os.path.basename(self.headers.get("X-Filename", "uploaded_video.mp4"))
+            clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "video.mp4"
             job_id = str(uuid.uuid4())[:8]
-            clean_name = "".join(c for c in filename if c.isalnum() or c in "._-")
-            input_path = os.path.join(upload_dir, f"{job_id}_{clean_name}")
+            input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{clean_name}")
 
             bytes_left = content_len
             with open(input_path, "wb") as f:
@@ -202,9 +270,21 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             preset_name = query.get("preset", ["matrix"])[0]
             base_cfg = PRESETS.get(preset_name, PRESETS["matrix"])
-            cols = int(query.get("cols", [base_cfg.cols])[0])
-            fps = query.get("fps", [None])[0]
+            try:
+                cols = int(query.get("cols", [base_cfg.cols])[0])
+                cols = max(10, min(500, cols))
+            except (ValueError, TypeError):
+                cols = base_cfg.cols
+
+            fps_raw = query.get("fps", [None])[0]
+            try:
+                fps = int(fps_raw) if fps_raw else None
+            except (ValueError, TypeError):
+                fps = None
+
             res = query.get("resolution", ["1080p"])[0]
+            if res not in ("720p", "1080p", "1440p", "2k", "4k"):
+                res = "1080p"
 
             cfg = EngineConfig(
                 cols=cols,
@@ -221,6 +301,7 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
             output_path = os.path.join(OUTPUT_DIR, f"ascii_{job_id}.mp4")
             job = ConversionJob(job_id, input_path, output_path, cfg)
             JOBS[job_id] = job
+            JOB_TIMESTAMPS[job_id] = time.time()
 
             def worker():
                 try:
@@ -229,13 +310,19 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                         input_path=input_path,
                         output_path=output_path,
                         config=cfg,
-                        target_fps=int(fps) if fps else None,
+                        target_fps=fps,
                         target_resolution=res,
                         job=job,
                     )
                 except Exception as ex:
                     job.progress.status = "failed"
                     job.progress.error_message = str(ex)
+                finally:
+                    if os.path.exists(input_path):
+                        try:
+                            os.remove(input_path)
+                        except Exception:
+                            pass
 
             threading.Thread(target=worker, daemon=True).start()
 
@@ -248,6 +335,11 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
             return
 
         content_len = int(self.headers.get("Content-Length", 0))
+        if content_len > 10 * 1024 * 1024:  # 10 MB JSON payload limit
+            self._set_cors("application/json", status=413)
+            self.wfile.write(json.dumps({"error": "Payload too large"}).encode("utf-8"))
+            return
+
         body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
         try:
             payload = json.loads(body)
@@ -257,36 +349,72 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
         # 1. Start Conversion: /api/convert
         if path == "/api/convert":
             input_path = payload.get("input_path")
-            if not input_path or not os.path.exists(input_path):
+            if not input_path or not os.path.isfile(input_path):
                 self._set_cors("application/json", status=400)
-                self.wfile.write(json.dumps({"error": f"input_path '{input_path}' does not exist"}).encode("utf-8"))
+                self.wfile.write(json.dumps({"error": f"input_path '{input_path}' is not a valid accessible file"}).encode("utf-8"))
                 return
 
             job_id = str(uuid.uuid4())[:8]
-            ext = ".webm" if payload.get("format", "mp4").lower() == "webm" else ".mp4"
-            output_path = payload.get("output_path") or os.path.join(OUTPUT_DIR, f"ascii_{job_id}{ext}")
+            ext = ".webm" if str(payload.get("format", "mp4")).lower() == "webm" else ".mp4"
 
-            # Configuration
+            # Enforce output path is strictly contained within OUTPUT_DIR
+            req_out = payload.get("output_path")
+            if req_out:
+                safe_out_name = os.path.basename(req_out).strip()
+                if not safe_out_name or safe_out_name.startswith("."):
+                    safe_out_name = f"ascii_{job_id}{ext}"
+                if not (safe_out_name.endswith(".mp4") or safe_out_name.endswith(".webm")):
+                    safe_out_name += ext
+                output_path = os.path.join(OUTPUT_DIR, safe_out_name)
+            else:
+                output_path = os.path.join(OUTPUT_DIR, f"ascii_{job_id}{ext}")
+
+            # Configuration & parameter validation
             preset_name = payload.get("preset", "matrix")
             base_cfg = PRESETS.get(preset_name, PRESETS["matrix"])
-            
+
+            try:
+                cols = int(payload.get("cols", base_cfg.cols))
+                if cols < 10 or cols > 500:
+                    raise ValueError("cols must be between 10 and 500")
+            except (ValueError, TypeError) as ex:
+                self._set_cors("application/json", status=400)
+                self.wfile.write(json.dumps({"error": f"Invalid 'cols' parameter: {ex}"}).encode("utf-8"))
+                return
+
+            try:
+                contrast = int(payload.get("contrast", base_cfg.contrast))
+                brightness = int(payload.get("brightness", base_cfg.brightness))
+                edge_threshold = float(payload.get("edge_threshold", base_cfg.edge_threshold))
+                temporal_smoothing = float(payload.get("temporal_smoothing", base_cfg.temporal_smoothing))
+            except (ValueError, TypeError) as ex:
+                self._set_cors("application/json", status=400)
+                self.wfile.write(json.dumps({"error": f"Invalid numeric parameters: {ex}"}).encode("utf-8"))
+                return
+
+            target_fps_raw = payload.get("fps")
+            try:
+                target_fps = int(target_fps_raw) if target_fps_raw else None
+            except (ValueError, TypeError):
+                target_fps = None
+
+            target_res = str(payload.get("resolution", "1080p")).lower()
+
             cfg = EngineConfig(
-                cols=int(payload.get("cols", base_cfg.cols)),
+                cols=cols,
                 color_mode=payload.get("color_mode", base_cfg.color_mode),
                 char_set=payload.get("char_set", base_cfg.char_set),
                 enable_edge_detection=bool(payload.get("enable_edge_detection", base_cfg.enable_edge_detection)),
-                edge_threshold=float(payload.get("edge_threshold", base_cfg.edge_threshold)),
-                temporal_smoothing=float(payload.get("temporal_smoothing", base_cfg.temporal_smoothing)),
+                edge_threshold=edge_threshold,
+                temporal_smoothing=temporal_smoothing,
                 phosphor_color=tuple(payload.get("phosphor_color", base_cfg.phosphor_color)),
-                contrast=int(payload.get("contrast", base_cfg.contrast)),
-                brightness=int(payload.get("brightness", base_cfg.brightness)),
+                contrast=contrast,
+                brightness=brightness,
             )
 
             job = ConversionJob(job_id, input_path, output_path, cfg)
             JOBS[job_id] = job
-
-            target_fps = payload.get("fps")
-            target_res = payload.get("resolution", "1080p")
+            JOB_TIMESTAMPS[job_id] = time.time()
 
             # Run in worker thread
             def worker():
@@ -296,7 +424,7 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                         input_path=input_path,
                         output_path=output_path,
                         config=cfg,
-                        target_fps=int(target_fps) if target_fps else None,
+                        target_fps=target_fps,
                         target_resolution=target_res,
                         job=job,
                     )
@@ -330,20 +458,23 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                     image_b64 = image_b64.split(",", 1)[1]
                 img_bytes = base64.b64decode(image_b64)
 
-                # Decode into numpy array via temp or ppm/png
-                # Using simple raw RGB decoder if dimensions provided
-                w = payload.get("width")
-                h = payload.get("height")
-                if w and h and len(img_bytes) == w * h * 3:
+                w = int(payload.get("width", 0))
+                h = int(payload.get("height", 0))
+                if w > 0 and h > 0 and len(img_bytes) == w * h * 3:
                     frame = np.frombuffer(img_bytes, dtype=np.uint8).reshape((h, w, 3))
                 else:
-                    # Generic decoder fallback via Cairo or subprocess
                     self._set_cors("application/json", status=400)
-                    self.wfile.write(json.dumps({"error": "Raw RGB requires width and height"}).encode("utf-8"))
+                    self.wfile.write(json.dumps({"error": "Raw RGB requires valid width and height matching byte length"}).encode("utf-8"))
                     return
 
+                try:
+                    cols = int(payload.get("cols", 80))
+                    cols = max(10, min(500, cols))
+                except (ValueError, TypeError):
+                    cols = 80
+
                 engine = AsciiAIEngine(PRESETS.get(payload.get("preset", "matrix")))
-                lines, colors = engine.process_frame(frame, target_cols=payload.get("cols", 80))
+                lines, colors = engine.process_frame(frame, target_cols=cols)
 
                 self._set_cors("application/json")
                 self.wfile.write(json.dumps({"lines": lines}).encode("utf-8"))

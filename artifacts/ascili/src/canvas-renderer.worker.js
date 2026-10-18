@@ -3,6 +3,45 @@ let ctx;
 let sampleCanvas;
 let sampleCtx;
 
+const ANSI16_PALETTE = [
+  [0,0,0],[128,0,0],[0,128,0],[128,128,0],
+  [0,0,128],[128,0,128],[0,128,128],[192,192,192],
+  [128,128,128],[255,0,0],[0,255,0],[255,255,0],
+  [0,0,255],[255,0,255],[0,255,255],[255,255,255],
+];
+
+function quantizeAnsi16(r, g, b) {
+  let best = ANSI16_PALETTE[0];
+  let bestD = Infinity;
+  for (let i = 0; i < 16; i++) {
+    const c = ANSI16_PALETTE[i];
+    const d = (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
+function quantizeCubeVal(v) {
+  if (v < 48) return 0;
+  if (v < 115) return 95;
+  if (v < 155) return 135;
+  if (v < 195) return 175;
+  if (v < 235) return 215;
+  return 255;
+}
+
+function quantizeAnsi256(r, g, b) {
+  const qr = quantizeCubeVal(r);
+  const qg = quantizeCubeVal(g);
+  const qb = quantizeCubeVal(b);
+  const dCube = (r - qr) ** 2 + (g - qg) ** 2 + (b - qb) ** 2;
+  const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  const grayStep = Math.max(0, Math.min(23, Math.round((gray - 8) / 10)));
+  const qGray = 8 + grayStep * 10;
+  const dGray = (r - qGray) ** 2 + (g - qGray) ** 2 + (b - qGray) ** 2;
+  return dGray < dCube ? [qGray, qGray, qGray] : [qr, qg, qb];
+}
+
 self.onmessage = ({ data }) => {
   const startedAt = performance.now();
   const { frame, width, height, cols, rows, config, chars, generation } = data;
@@ -52,13 +91,11 @@ self.onmessage = ({ data }) => {
             const gray = Math.round(lum * 255);
             pr = gray; pg = gray; pb = gray;
           } else if (config.colorMode === 'ansi16') {
-            pr = Math.round(Math.round(pr / 127.5) * 127.5);
-            pg = Math.round(Math.round(pg / 127.5) * 127.5);
-            pb = Math.round(Math.round(pb / 127.5) * 127.5);
+            const [cr, cg, cb] = quantizeAnsi16(pr, pg, pb);
+            pr = cr; pg = cg; pb = cb;
           } else if (config.colorMode === 'ansi256') {
-            pr = Math.round(Math.round(pr / 51) * 51);
-            pg = Math.round(Math.round(pg / 51) * 51);
-            pb = Math.round(Math.round(pb / 51) * 51);
+            const [cr, cg, cb] = quantizeAnsi256(pr, pg, pb);
+            pr = cr; pg = cg; pb = cb;
           }
           const next = `rgb(${pr},${pg},${pb})`;
           if (next !== color) {

@@ -1788,11 +1788,7 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
   const colorMarkup = (isAss || isYoutube || isYtt)
     ? (cfg.colorMode === 'monochrome' || isYoutube ? 0 : cells * 15)
     : (cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28);
-  const cueBytes = cells * bytesPerChar + colorMarkup + (isAss || isYtt ? 50 : 48);
   const totalRaw = cueBytes * Math.ceil(duration * fps);
-  if (isYtt) {
-    return Math.min(20 * 1024 * 1024, totalRaw);
-  }
   return totalRaw;
 }
 
@@ -1922,7 +1918,11 @@ function updateLongVideoWarning() {
   const speedMult = fps <= 15 ? 2.0 : fps <= 30 ? 1.5 : 1.0;
   const estRenderTime = fmtTime(duration / speedMult);
   const speedNote = isSubtitle ? ` ${speedMult.toFixed(1)}× accelerated conversion active (finishes in ~${estRenderTime}).` : '';
-  cvWarningText.textContent = `${summary}${speedNote} Keep tab open during conversion.`;
+  if (isYtt && size > 20 * 1024 * 1024) {
+    cvWarningText.textContent = `${summary} ⚠️ YouTube limits .ytt subtitle files to 20 MB. Estimated output (${fmtBytes(size)}) exceeds this limit and will be truncated. Consider reducing FPS, columns, or video length.`;
+  } else {
+    cvWarningText.textContent = `${summary}${speedNote} Keep tab open during conversion.`;
+  }
 }
 
 function charSetLabel(cs) {
@@ -2065,7 +2065,8 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
           write: chunk => new Promise((resolve, reject) => {
             try {
               const tx = db.transaction('chunks', 'readwrite');
-              tx.objectStore('chunks').add(chunk);
+              const blobChunk = chunk instanceof Blob ? chunk : new Blob([chunk]);
+              tx.objectStore('chunks').add(blobChunk);
               tx.oncomplete = () => resolve();
               tx.onerror = () => reject(tx.error);
             } catch (err) {
@@ -2085,10 +2086,18 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
           if (!closed) throw new Error('Export is not ready yet.');
           assembledBlob = await new Promise((resolve, reject) => {
             const tx = db.transaction('chunks', 'readonly');
-            const req = tx.objectStore('chunks').getAll();
-            req.onsuccess = () => {
-              const allChunks = req.result || [];
-              resolve(new Blob(allChunks, { type: mimeType }));
+            const store = tx.objectStore('chunks');
+            const req = store.openCursor();
+            const chunkBlobs = [];
+            req.onsuccess = event => {
+              const cursor = event.target.result;
+              if (cursor) {
+                const val = cursor.value;
+                chunkBlobs.push(val instanceof Blob ? val : new Blob([val]));
+                cursor.continue();
+              } else {
+                resolve(new Blob(chunkBlobs, { type: mimeType }));
+              }
             };
             req.onerror = () => reject(req.error);
           });
@@ -2621,8 +2630,11 @@ cvStart.addEventListener('click', async () => {
         const formatName = isYtt ? 'YouTube Timed Text (.ytt)' : isYoutube ? 'YouTube Captions' : isAss ? 'ASS' : isVtt ? 'WebVTT' : 'SRT';
         const colsDisplay = result?.cols || exportCols;
         const fontNote = isYtt ? `  ·  font ${cfg.fontSize || 1}` : isYoutube ? '  ·  plain text' : isAss ? '  ·  9px font' : '';
-        cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  ${formatName}  ·  ${targetFps} FPS  ·  ${colsDisplay} cols${fontNote}`;
-        showToast(isYtt ? 'YouTube Timed Text (.ytt) ready to download' : `${formatName} ready to download`);
+        if (result?.truncated) {
+          showToast('⚠️ YouTube .ytt 20 MB ceiling reached. Subtitles were truncated. Reduce FPS or columns to fit entire video.', 7000);
+        } else {
+          showToast(isYtt ? 'YouTube Timed Text (.ytt) ready to download' : `${formatName} ready to download`);
+        }
         try {
           if (blob) download(filename, blob, resultMime);
         } catch {}

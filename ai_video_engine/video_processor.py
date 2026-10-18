@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import json
+import math
 import shutil
 import tempfile
 import subprocess
@@ -171,7 +172,7 @@ class VideoProcessor:
 
         out_fps = target_fps or min(max(int(round(meta.fps)), 15), 120)
 
-        # Output resolution resolution mapping
+        # Output resolution mapping respecting source orientation (portrait vs landscape)
         res_map = {
             "720p": (1280, 720),
             "1080p": (1920, 1080),
@@ -180,24 +181,38 @@ class VideoProcessor:
             "4k": (3840, 2160),
         }
         if target_resolution and target_resolution.lower() in res_map:
-            out_w, out_h = res_map[target_resolution.lower()]
+            std_w, std_h = res_map[target_resolution.lower()]
+            is_portrait = meta.width < meta.height
+            bound_w = min(std_w, std_h) if is_portrait else max(std_w, std_h)
+            bound_h = max(std_w, std_h) if is_portrait else min(std_w, std_h)
+            # Scale to fit target bounding box preserving source aspect ratio without stretching
+            scale = min(bound_w / meta.width, bound_h / meta.height)
+            out_w = (int(round(meta.width * scale)) + 1) & ~1
+            out_h = (int(round(meta.height * scale)) + 1) & ~1
         else:
             # Maintain original aspect ratio, snap to even numbers
             out_w = (meta.width + 1) & ~1
             out_h = (meta.height + 1) & ~1
 
-        # Automatically scale font size based on cols and resolution
-        char_aspect = 0.50
+        # Synchronize geometry constant with browser engine (0.45)
+        char_aspect = 0.45
+        char_w_factor = 0.601
         cols = cfg.cols
         rows = max(1, int(round(cols * (out_h / out_w) * char_aspect)))
-        
-        # Calculate optimal font size to fill the output canvas
-        font_size = max(6, int(out_h / rows))
+
+        # Calculate optimal font size to fit BOTH width and height (never clip on the right)
+        font_from_w = out_w / (cols * char_w_factor)
+        font_from_h = out_h / rows
+        font_size = max(1, int(math.floor(min(font_from_w, font_from_h))))
         cfg.font_size = font_size
 
-        total_frames = meta.total_frames
-        if total_frames <= 0:
-            total_frames = int(meta.duration * out_fps) if meta.duration > 0 else 1000
+        # Accurate total frame count when source and output FPS differ
+        if meta.total_frames > 0 and meta.fps > 0:
+            total_frames = max(1, int(round(meta.total_frames * (out_fps / meta.fps))))
+        elif meta.duration > 0:
+            total_frames = max(1, int(round(meta.duration * out_fps)))
+        else:
+            total_frames = 1000
 
         if job:
             job.progress.total_frames = total_frames
@@ -238,7 +253,7 @@ class VideoProcessor:
                 "ffmpeg",
                 "-i", input_path,
                 "-r", str(out_fps),
-                "-s", f"{out_w}x{out_h}",
+                "-vf", f"scale={out_w}:{out_h}",
                 "-f", "image2pipe",
                 "-pix_fmt", "rgb24",
                 "-vcodec", "rawvideo",
@@ -282,11 +297,13 @@ class VideoProcessor:
 
             out_cmd.append(output_path)
 
+            stderr_log_path = os.path.join(temp_dir, "ffmpeg_stderr.log")
+            stderr_file = open(stderr_log_path, "wb")
             out_proc = subprocess.Popen(
                 out_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=stderr_file,
                 bufsize=10**7,
             )
 
@@ -302,6 +319,7 @@ class VideoProcessor:
                 if job and job.should_cancel:
                     in_proc.kill()
                     out_proc.kill()
+                    stderr_file.close()
                     job.progress.status = "cancelled"
                     return ""
 
@@ -353,9 +371,14 @@ class VideoProcessor:
             in_proc.wait()
 
             out_proc.stdin.close()
-            _, err = out_proc.communicate()
+            out_proc.wait()
+            stderr_file.close()
+
             if out_proc.returncode != 0:
-                err_msg = err.decode("utf-8", errors="replace") if err else "Unknown FFmpeg error"
+                err_msg = "Unknown FFmpeg error"
+                if os.path.exists(stderr_log_path):
+                    with open(stderr_log_path, "r", errors="replace") as ef:
+                        err_msg = ef.read().strip() or err_msg
                 if job:
                     job.progress.status = "failed"
                     job.progress.error_message = err_msg
@@ -371,6 +394,11 @@ class VideoProcessor:
             return output_path
 
         finally:
-            # Clean up temporary audio files
+            try:
+                if "stderr_file" in locals() and not stderr_file.closed:
+                    stderr_file.close()
+            except Exception:
+                pass
+            # Clean up temporary audio files and logs
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)

@@ -50,7 +50,7 @@
 
 - **Client-Side Engine (`artifacts/ascili`)**: Zero-latency HTML5 Canvas/WebGL engine capable of transforming live webcam streams, screen recordings, and local video files into ASCII animations at up to 60 FPS in full 24-bit TrueColor or retro phosphor green.
 - **Backend API & Server (`artifacts/api-server`)**: Hardened Express 5 server providing unified static file serving, safe Single-Page Application (SPA) routing, CORS allowlists, sliding-window rate limiting, and health monitoring.
-- **Python Video Processing Engine (`ai_video_engine`)**: Server-side engine utilizing OpenCV, NumPy, and FastAPI for offline batch conversions, high-resolution rendering, and headless pipelines.
+- **Python Video Processing Engine (`ai_video_engine`)**: Server-side engine utilizing NumPy, pycairo, FFmpeg, and standard library HTTP server for offline batch conversions, 1080p rendering with audio preservation, and headless pipelines.
 
 ---
 
@@ -185,12 +185,12 @@ YouTube's subtitle renderer supports rich XML styling through the `.ytt` (YouTub
 │   ├── api-zod/                # Zod validation schemas
 │   ├── api-client-react/       # React Query client hooks
 │   └── db/                     # Drizzle ORM database layer (PostgreSQL)
-├── ai_video_engine/            # Python backend engine (OpenCV / FastAPI)
+├── ai_video_engine/            # Python backend engine (NumPy / pycairo / FFmpeg)
 ├── .github/workflows/
-│   ├── ci.yml                  # Automated typecheck & build pipeline
+│   ├── ci.yml                  # Automated typecheck, build, and Python test pipeline
 │   └── deploy.yml              # GitHub Pages deployment workflow
 ├── Dockerfile                  # Multi-stage production container build
-├── docker-compose.yml          # Container orchestration (Node API + PostgreSQL)
+├── docker-compose.yml          # Container orchestration (Node API + optional Python engine)
 ├── docker-entrypoint.sh        # Container startup script with dumb-init signal handling
 ├── LICENSE                     # MIT License
 └── pnpm-workspace.yaml         # Pnpm workspace definition and dependency policies
@@ -203,7 +203,7 @@ YouTube's subtitle renderer supports rich XML styling through the `.ytt` (YouTub
 - **Node.js**: `>= 20.0.0` (LTS recommended)
 - **pnpm**: `>= 9.0.0` (Pinned to `10.5.2`)
 - **Docker & Docker Compose** (optional, for containerized deployments)
-- **Python**: `>= 3.10` with `numpy` & `opencv-python` (optional, for `ai_video_engine`)
+- **Python**: `>= 3.10` with `numpy`, `pycairo`, and `ffmpeg` (for `ai_video_engine`)
 
 ---
 
@@ -267,14 +267,26 @@ docker build -t ascii-streamer .
 docker run -p 3000:3000 -e NODE_ENV=production ascii-streamer
 ```
 
-### Docker Compose (API + PostgreSQL)
+### Docker Compose
 
 ```bash
 docker-compose up --build
 ```
 This boots:
-- `ascii-streamer-db`: PostgreSQL 16 on port `5432`
-- `ascii-streamer-api`: Node.js server on port `3000`
+- `ascii-streamer-api`: Node.js server and ASCILI web application on port `3000`
+
+### Python AI Video Engine (`ai_video_engine`)
+
+The Python engine provides high-resolution edge-aware structural perception and headless video conversion:
+- **Throughput**: ~12–15 FPS for full 1080p60 Cairo rasterization on CPU with audio preservation; ~40+ FPS for raw ASCII conversion.
+- **Run Standalone Server**:
+  ```bash
+  python3 -m ai_video_engine.server 8000
+  ```
+- **Run Engine Tests**:
+  ```bash
+  pytest ai_video_engine/test_engine.py
+  ```
 
 ---
 

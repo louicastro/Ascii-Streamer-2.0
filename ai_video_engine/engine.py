@@ -196,7 +196,7 @@ class AsciiAIEngine:
         self,
         rgb_frame: np.ndarray,
         target_cols: Optional[int] = None,
-        char_aspect_ratio: float = 0.50,
+        char_aspect_ratio: float = 0.45,
     ) -> Tuple[List[str], np.ndarray]:
         """
         Process a single RGB image/frame (height, width, 3) uint8.
@@ -212,16 +212,20 @@ class AsciiAIEngine:
         rows = max(1, int(round(cols * (h / w) * char_aspect_ratio)))
 
         # 1. Downsample video frame to cell grid resolution
-        # Using block-averaging in NumPy for maximum speed
+        # True area-averaged box sampling (multi-point cell averaging) to prevent shimmering
         cell_w = w / cols
         cell_h = h / rows
-        
-        # Fast uniform grid sampling via integer slices
-        x_indices = np.linspace(0, w - 1, cols, dtype=int)
-        y_indices = np.linspace(0, h - 1, rows, dtype=int)
-        
-        # Cell sample grid
-        sampled_rgb = rgb_frame[np.ix_(y_indices, x_indices)].astype(np.float32)
+
+        # Sample across a 3x3 grid within each cell for smooth, anti-aliased representation
+        x_offsets = [0.2, 0.5, 0.8]
+        y_offsets = [0.2, 0.5, 0.8]
+        acc = np.zeros((rows, cols, 3), dtype=np.float32)
+        for yo in y_offsets:
+            yi = np.clip((np.arange(rows) * cell_h + cell_h * yo).astype(int), 0, h - 1)
+            for xo in x_offsets:
+                xi = np.clip((np.arange(cols) * cell_w + cell_w * xo).astype(int), 0, w - 1)
+                acc += rgb_frame[np.ix_(yi, xi)]
+        sampled_rgb = acc * (1.0 / 9.0)
 
         # 2. Adjustments: Brightness, Contrast, Saturation, Gamma
         adjusted_rgb = self._apply_color_adjustments(sampled_rgb, cfg)
@@ -248,47 +252,70 @@ class AsciiAIEngine:
 
         self._prev_lum = lum.copy()
 
-        # 6. Character Selection Ramp
+        # 6. Character Selection Ramp with Rounding Hysteresis
         char_ramp = CHAR_SETS.get(cfg.char_set, cfg.char_set)
         if not char_ramp:
             char_ramp = CHAR_SETS["standard"]
         n_chars = len(char_ramp)
 
-        char_indices = np.clip(np.round(lum * (n_chars - 1)).astype(int), 0, n_chars - 1)
+        raw_indices = lum * (n_chars - 1)
         if cfg.invert_chars:
-            char_indices = (n_chars - 1) - char_indices
+            raw_indices = (n_chars - 1) - raw_indices
 
-        # 7. AI Structural Edge Perception
+        if (
+            cfg.temporal_smoothing > 0.0
+            and self._prev_chars is not None
+            and self._prev_chars.shape == raw_indices.shape
+        ):
+            # Deadband hysteresis on character index:
+            # Prevents character choice from flipping back and forth at rounding boundaries on static scenes
+            hysteresis = 0.35 * cfg.temporal_smoothing
+            prev = self._prev_chars.astype(np.float32)
+            char_indices = self._prev_chars.copy()
+            step_up = raw_indices > (prev + 0.5 + hysteresis)
+            char_indices[step_up] = np.clip(np.round(raw_indices[step_up]), 0, n_chars - 1).astype(int)
+            step_down = raw_indices < (prev - 0.5 - hysteresis)
+            char_indices[step_down] = np.clip(np.round(raw_indices[step_down]), 0, n_chars - 1).astype(int)
+        else:
+            char_indices = np.clip(np.round(raw_indices).astype(int), 0, n_chars - 1)
+
+        self._prev_chars = char_indices.copy()
+
+        # 7. AI Structural Edge Perception with True 3x3 Sobel Operator
         if cfg.enable_edge_detection and rows > 2 and cols > 2:
-            # Compute 2D Sobel spatial gradients
             grad_x = np.zeros_like(lum)
             grad_y = np.zeros_like(lum)
-            grad_x[:, 1:-1] = (lum[:, 2:] - lum[:, :-2]) * 0.5
-            grad_y[1:-1, :] = (lum[2:, :] - lum[:-2, :]) * 0.5
+            # True 3x3 Sobel kernels (smoothed along orthogonal axis)
+            grad_x[1:-1, 1:-1] = (
+                (lum[0:-2, 2:] + 2.0 * lum[1:-1, 2:] + lum[2:, 2:]) -
+                (lum[0:-2, 0:-2] + 2.0 * lum[1:-1, 0:-2] + lum[2:, 0:-2])
+            ) / 8.0
+            grad_y[1:-1, 1:-1] = (
+                (lum[2:, 0:-2] + 2.0 * lum[2:, 1:-1] + lum[2:, 2:]) -
+                (lum[0:-2, 0:-2] + 2.0 * lum[0:-2, 1:-1] + lum[0:-2, 2:])
+            ) / 8.0
 
             grad_mag = np.sqrt(grad_x**2 + grad_y**2)
             grad_angle = np.arctan2(grad_y, grad_x)  # -pi to pi
-
-            # Normalize angles to [0, pi)
             grad_angle = np.mod(grad_angle + np.pi, np.pi)
 
-            edge_mask = grad_mag >= cfg.edge_threshold
-            
-            # Build matrix of characters
+            # Edge weight modulates threshold sensitivity
+            weight = getattr(cfg, "edge_weight", 0.65)
+            effective_threshold = cfg.edge_threshold * (1.3 - 0.6 * np.clip(weight, 0.0, 1.0))
+            edge_mask = grad_mag >= effective_threshold
+
             char_matrix = np.array(list(char_ramp))[char_indices]
 
-            # Assign structural glyphs based on edge orientation
-            # 0 and pi -> Vertical edge (perpendicular to horizontal gradient)
-            # pi/2 -> Horizontal edge (perpendicular to vertical gradient)
+            # Assign structural glyphs from EDGE_GLYPHS based on edge orientation
             vert_edge = edge_mask & ((grad_angle < np.pi / 8) | (grad_angle > 7 * np.pi / 8))
             horiz_edge = edge_mask & (grad_angle >= 3 * np.pi / 8) & (grad_angle <= 5 * np.pi / 8)
             slash_edge = edge_mask & (grad_angle >= np.pi / 8) & (grad_angle < 3 * np.pi / 8)
             bslash_edge = edge_mask & (grad_angle > 5 * np.pi / 8) & (grad_angle <= 7 * np.pi / 8)
 
-            char_matrix[vert_edge] = "|"
-            char_matrix[horiz_edge] = "-"
-            char_matrix[slash_edge] = "/"
-            char_matrix[bslash_edge] = "\\"
+            char_matrix[vert_edge] = EDGE_GLYPHS["vertical"][0]
+            char_matrix[horiz_edge] = EDGE_GLYPHS["horizontal"][0]
+            char_matrix[slash_edge] = EDGE_GLYPHS["diagonal_slash"][0]
+            char_matrix[bslash_edge] = EDGE_GLYPHS["diagonal_backslash"][0]
         else:
             char_matrix = np.array(list(char_ramp))[char_indices]
 
@@ -462,19 +489,23 @@ class AsciiAIEngine:
 
         char_h = cfg.font_size
         char_w = cfg.font_size * 0.601  # Standard monospace ratio
+        cols = len(lines[0]) if rows > 0 else 0
+        total_text_w = cols * char_w
+        total_text_h = rows * char_h
+        offset_x = max(0.0, (width - total_text_w) * 0.5)
+        offset_y = max(0.0, (height - total_text_h) * 0.5)
 
         if mode == "monochrome":
             pr, pg, pb = cfg.phosphor_color
             ctx.set_source_rgb(pr / 255.0, pg / 255.0, pb / 255.0)
 
             for r, line in enumerate(lines):
-                y = (r + 1) * char_h
-                ctx.move_to(0, y)
+                y = offset_y + (r + 1) * char_h
+                ctx.move_to(offset_x, y)
                 ctx.show_text(line)
         else:
-            cols = len(lines[0]) if rows > 0 else 0
             for r in range(rows):
-                y = (r + 1) * char_h
+                y = offset_y + (r + 1) * char_h
                 line = lines[r]
                 row_colors = colors[r]
 
@@ -488,7 +519,7 @@ class AsciiAIEngine:
 
                     substr = line[start_c:c]
                     ctx.set_source_rgb(cr / 255.0, cg / 255.0, cb / 255.0)
-                    ctx.move_to(start_c * char_w, y)
+                    ctx.move_to(offset_x + start_c * char_w, y)
                     ctx.show_text(substr)
 
         surface.flush()

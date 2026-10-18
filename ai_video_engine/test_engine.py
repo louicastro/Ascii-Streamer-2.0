@@ -121,6 +121,100 @@ def test_presets():
         print(f"    ✓ Preset '{name}': {cfg.color_mode}, cols={cfg.cols}, edge={cfg.enable_edge_detection}")
 
 
+def test_web_api():
+    print("\n--> [4/4] Testing Web API Server...")
+    from ai_video_engine.server import ThreadedHTTPServer, AsciliServerHandler
+    import urllib.request
+    import urllib.error
+    import threading
+    import json
+
+    server = ThreadedHTTPServer(("127.0.0.1", 0), AsciliServerHandler)
+    port = server.server_address[1]
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    base_url = f"http://127.0.0.1:{port}"
+
+    try:
+        # 1. Health endpoint
+        req = urllib.request.Request(f"{base_url}/api/health")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            data = json.loads(resp.read().decode())
+            assert data["status"] == "ok"
+            assert "cairo_enabled" in data
+            print("    ✓ Health check endpoint verified")
+
+        # 2. Presets endpoint
+        req = urllib.request.Request(f"{base_url}/api/presets")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 200
+            presets = json.loads(resp.read().decode())
+            assert "matrix" in presets
+            assert "cyberpunk" in presets
+            print("    ✓ Presets endpoint verified")
+
+        # 3. Input validation: missing file returns 400
+        req = urllib.request.Request(
+            f"{base_url}/api/convert",
+            data=json.dumps({"input_path": "/nonexistent/video.mp4"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req)
+            assert False, "Should have failed with 400"
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+            print("    ✓ Input file validation verified (400 on non-existent file)")
+
+        # 4. Input validation: invalid cols returns 400
+        req = urllib.request.Request(
+            f"{base_url}/api/convert",
+            data=json.dumps({"input_path": __file__, "cols": -5}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(req)
+            assert False, "Should have failed with 400"
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+            print("    ✓ Cols parameter validation verified (400 on invalid cols)")
+
+        # 5. Auth verification
+        os.environ["ASCILI_API_KEY"] = "secret123"
+        try:
+            # Without key should fail 401
+            req = urllib.request.Request(
+                f"{base_url}/api/convert",
+                data=json.dumps({"input_path": __file__}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                urllib.request.urlopen(req)
+                assert False, "Should have failed with 401"
+            except urllib.error.HTTPError as e:
+                assert e.code == 401
+                print("    ✓ API auth rejection verified (401 without key)")
+
+            # With key should succeed past auth (will return 400 on invalid input, but NOT 401)
+            req = urllib.request.Request(
+                f"{base_url}/api/convert",
+                data=json.dumps({"input_path": "/nonexistent/video.mp4"}).encode(),
+                headers={"Content-Type": "application/json", "Authorization": "Bearer secret123"},
+            )
+            try:
+                urllib.request.urlopen(req)
+            except urllib.error.HTTPError as e:
+                assert e.code == 400
+                print("    ✓ API auth acceptance verified (Bearer token authorized)")
+        finally:
+            os.environ.pop("ASCILI_API_KEY", None)
+
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 if __name__ == "__main__":
     print("==================================================")
     print("  ASCILI AI Video Engine - Test Suite")
@@ -128,6 +222,7 @@ if __name__ == "__main__":
     test_core_engine()
     test_presets()
     test_video_conversion()
+    test_web_api()
     print("\n==================================================")
     print("  ALL TESTS PASSED SUCCESSFULLY! (100% Ready)")
     print("==================================================")

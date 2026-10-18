@@ -55,4 +55,6 @@ __pycache__/
 *.py[cod]
 modify_css.py
 converted_videos/
+uploaded_videos/
+test_output/
 Ascii-Streamer/

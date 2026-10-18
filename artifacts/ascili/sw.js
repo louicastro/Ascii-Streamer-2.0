@@ -1,5 +1,5 @@
 // ASCILI Offline Service Worker
-const CACHE_NAME = 'ascili-cache-v3';
+const CACHE_NAME = 'ascili-cache-v4';
 
 const STATIC_ASSETS = [
   './',
@@ -50,14 +50,14 @@ self.addEventListener('fetch', event => {
           }
           return networkResponse;
         })
-        .catch(() => caches.match(req))
+        .catch(() => caches.match(req, { ignoreSearch: true }))
     );
     return;
   }
 
   // Stale-while-revalidate for static assets like fonts and images
   event.respondWith(
-    caches.match(req).then(cached => {
+    caches.match(req, { ignoreSearch: true }).then(cached => {
       const fetchPromise = fetch(req).then(networkResponse => {
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const resClone = networkResponse.clone();

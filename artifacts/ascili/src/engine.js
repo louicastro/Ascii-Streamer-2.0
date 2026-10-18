@@ -46,6 +46,37 @@ export function closestRgb(palette, r, g, b) {
   return palette[best];
 }
 
+export function quantizeAnsi16(r, g, b) {
+  let best = ANSI16[0], bestD = Infinity;
+  for (let i = 0; i < 16; i++) {
+    const c = ANSI16[i];
+    const d = (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2;
+    if (d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
+function quantizeCubeVal(v) {
+  if (v < 48) return 0;
+  if (v < 115) return 95;
+  if (v < 155) return 135;
+  if (v < 195) return 175;
+  if (v < 235) return 215;
+  return 255;
+}
+
+export function quantizeAnsi256(r, g, b) {
+  const qr = quantizeCubeVal(r);
+  const qg = quantizeCubeVal(g);
+  const qb = quantizeCubeVal(b);
+  const dCube = (r - qr) ** 2 + (g - qg) ** 2 + (b - qb) ** 2;
+  const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+  const grayStep = Math.max(0, Math.min(23, Math.round((gray - 8) / 10)));
+  const qGray = 8 + grayStep * 10;
+  const dGray = (r - qGray) ** 2 + (g - qGray) ** 2 + (b - qGray) ** 2;
+  return dGray < dCube ? [qGray, qGray, qGray] : [qr, qg, qb];
+}
+
 // Build color lookup tables only when an ANSI export first needs them. This
 // avoids several million distance checks and about 6 MiB of allocations at startup.
 function buildAnsiLookupTable(palette) {
@@ -1556,13 +1587,15 @@ export class AsciliEngine {
           colorGrid[p3 + 1] = lVal;
           colorGrid[p3 + 2] = lVal;
         } else if (config.colorMode === 'ansi16') {
-          colorGrid[p3]     = Math.round(Math.round(r / 127.5) * 127.5);
-          colorGrid[p3 + 1] = Math.round(Math.round(g / 127.5) * 127.5);
-          colorGrid[p3 + 2] = Math.round(Math.round(b / 127.5) * 127.5);
+          const [cr, cg, cb] = quantizeAnsi16(r, g, b);
+          colorGrid[p3]     = cr;
+          colorGrid[p3 + 1] = cg;
+          colorGrid[p3 + 2] = cb;
         } else if (config.colorMode === 'ansi256') {
-          colorGrid[p3]     = Math.round(Math.round(r / 51) * 51);
-          colorGrid[p3 + 1] = Math.round(Math.round(g / 51) * 51);
-          colorGrid[p3 + 2] = Math.round(Math.round(b / 51) * 51);
+          const [cr, cg, cb] = quantizeAnsi256(r, g, b);
+          colorGrid[p3]     = cr;
+          colorGrid[p3 + 1] = cg;
+          colorGrid[p3 + 2] = cb;
         } else {
           colorGrid[p3]     = r;
           colorGrid[p3 + 1] = g;
@@ -1735,13 +1768,11 @@ export class AsciliEngine {
               const gray = Math.round(lum * 255);
               red = gray; green = gray; blue = gray;
             } else if (cfg.colorMode === 'ansi16') {
-              red = Math.round(Math.round(red / 127.5) * 127.5);
-              green = Math.round(Math.round(green / 127.5) * 127.5);
-              blue = Math.round(Math.round(blue / 127.5) * 127.5);
+              const [cr, cg, cb] = quantizeAnsi16(red, green, blue);
+              red = cr; green = cg; blue = cb;
             } else if (cfg.colorMode === 'ansi256') {
-              red = Math.round(Math.round(red / 51) * 51);
-              green = Math.round(Math.round(green / 51) * 51);
-              blue = Math.round(Math.round(blue / 51) * 51);
+              const [cr, cg, cb] = quantizeAnsi256(red, green, blue);
+              red = cr; green = cg; blue = cb;
             }
             const colorKey = `${red},${green},${blue}`;
 
