@@ -32,6 +32,7 @@ export const RESOLUTIONS = {
   '720p':  { w: 1280, h: 720  },
   '1080p': { w: 1920, h: 1080 },
   '1440p': { w: 2560, h: 1440 },
+  '4k':    { w: 3840, h: 2160 },
 };
 
 /**
@@ -42,17 +43,79 @@ export function computeFontForResolution(cols, videoW, videoH, resolution) {
   const res = RESOLUTIONS[resolution];
   if (!res) return null; // 'auto' — caller uses its own fontSize
 
+  const isPortrait = videoH > videoW;
+  const targetW = isPortrait ? Math.min(res.w, res.h) : Math.max(res.w, res.h);
+  const targetH = isPortrait ? Math.max(res.w, res.h) : Math.min(res.w, res.h);
+
   const rows = Math.max(1, Math.round(cols * (videoH / videoW) * 0.45));
-  // Target: cols * fontSize * CHAR_W_FACTOR ≈ res.w
-  const fontFromW = res.w / (cols * CHAR_W_FACTOR);
-  // Target: rows * fontSize ≈ res.h
-  const fontFromH = res.h / rows;
+  // Target: cols * fontSize * CHAR_W_FACTOR ≈ targetW
+  const fontFromW = targetW / (cols * CHAR_W_FACTOR);
+  // Target: rows * fontSize ≈ targetH
+  const fontFromH = targetH / rows;
   // Use the smaller to fit both dimensions
   const fontSize = Math.min(120, Math.max(1, Math.floor(Math.min(fontFromW, fontFromH))));
 
   const canvasW = makeEven(Math.ceil(cols * fontSize * CHAR_W_FACTOR));
   const canvasH = makeEven(rows * fontSize);
-  return { fontSize, canvasW, canvasH, outputW: res.w, outputH: res.h, rows };
+  return { fontSize, canvasW, canvasH, outputW: targetW, outputH: targetH, rows };
+}
+
+/**
+ * Returns prioritized MIME candidates based on format selection and audio availability.
+ */
+export function getCandidateMimeTypes(format = 'auto', hasAudio = true) {
+  const audioSuffix = hasAudio ? ',mp4a.40.2' : '';
+  const opusSuffix = hasAudio ? ',opus' : '';
+
+  const hevcList = [
+    `video/mp4;codecs=hevc${audioSuffix}`,
+    `video/mp4;codecs=hvc1${audioSuffix}`,
+    `video/mp4;codecs=hev1${audioSuffix}`,
+    `video/mp4;codecs=hvc1.1.6.L93.B0${audioSuffix}`,
+    `video/mp4;codecs=hev1.1.6.L93.B0${audioSuffix}`,
+    'video/mp4;codecs=hevc',
+    'video/mp4;codecs=hvc1',
+    'video/mp4;codecs=hev1',
+    'video/mp4;codecs=hvc1.1.6.L93.B0',
+    'video/mp4;codecs=hev1.1.6.L93.B0',
+  ];
+
+  const avcList = [
+    `video/mp4;codecs=avc1.640028${audioSuffix}`, // High Profile (ideal for 1080p)
+    `video/mp4;codecs=avc1.4D401F${audioSuffix}`, // Main Profile
+    `video/mp4;codecs=avc1.42E01E${audioSuffix}`, // Baseline
+    `video/mp4;codecs=avc1${audioSuffix}`,
+    'video/mp4;codecs=avc1.640028',
+    'video/mp4;codecs=avc1.4D401F',
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+  ];
+
+  const webmList = [
+    `video/webm;codecs=vp9${opusSuffix}`,
+    'video/webm;codecs=vp9',
+    `video/webm;codecs=vp8${opusSuffix}`,
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+
+  if (format === 'mp4-h265' || format === 'h265' || format === 'hevc') {
+    return [...hevcList, ...avcList, ...webmList];
+  }
+
+  if (format === 'mp4-h264' || format === 'h264' || format === 'mp4' || format === 'avc') {
+    return [...avcList, ...webmList];
+  }
+
+  if (format === 'webm-vp9' || format === 'webm' || format === 'vp9') {
+    return [...webmList, ...avcList];
+  }
+
+  const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '') && !/Android/i.test(navigator.userAgent || '');
+  return isLinux
+    ? [...webmList, ...avcList, ...hevcList]
+    : [...avcList, ...hevcList, ...webmList];
 }
 
 /** Force a dimension to an even number (required by H.264 encoders). */
@@ -156,8 +219,8 @@ export class AsciliVideoExporter {
    */
   start(videoEl, cfg, opts = {}) {
     const {
-      onProgress, onComplete, onError, targetFps = 60, resolution = 'auto',
-      writable = null, maxBufferedBytes = Infinity, engine = null,
+      onProgress, onComplete, onError, targetFps = 60, resolution = '1080p',
+      format = 'mp4-h264', writable = null, maxBufferedBytes = Infinity, engine = null,
     } = opts;
 
     if (this._running) {
@@ -194,27 +257,8 @@ export class AsciliVideoExporter {
 
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
-    // Pick best supported MIME type
-    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '') && !/Android/i.test(navigator.userAgent || '');
-    const candidates = isLinux ? [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-    ] : [
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=vp8',
-      'video/webm',
-    ];
+    // Pick best supported MIME type using requested format
+    const candidates = getCandidateMimeTypes(format, true);
     const defaultMime = (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('video/mp4')) ? 'video/mp4' : 'video/webm';
     this._mimeType = candidates.find(t => {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
@@ -350,10 +394,12 @@ export class AsciliVideoExporter {
       }
     } catch {}
 
-    // Use higher bitrate for higher resolutions
-    const effectiveW = this._canvas.width;
-    const bitsPerSecond = effectiveW >= 2400 ? 16_000_000
-                        : effectiveW >= 1500 ? 8_000_000
+    // Use higher bitrate for higher resolutions (1080p, 1440p, 4K)
+    const maxDim = Math.max(this._canvas.width, this._canvas.height);
+    const bitsPerSecond = maxDim >= 3600 ? 25_000_000
+                        : maxDim >= 2400 ? 16_000_000
+                        : maxDim >= 1800 ? 12_000_000
+                        : maxDim >= 1200 ? 6_000_000
                         : 4_000_000;
 
     let recorder = null;
@@ -1586,7 +1632,7 @@ export class AsciliLiveRecorder {
    *   opts.onError(msg)
    */
   startRecording(cfg, opts = {}) {
-    const { targetFps = 60, resolution = 'auto',
+    const { targetFps = 60, resolution = 'auto', format = 'mp4-h264',
             videoWidth = 640, videoHeight = 480,
             onComplete, onError, writable = null,
             maxBufferedBytes = Infinity } = opts;
@@ -1601,27 +1647,8 @@ export class AsciliLiveRecorder {
 
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
-    // Pick MIME
-    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '') && !/Android/i.test(navigator.userAgent || '');
-    const candidates = isLinux ? [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-    ] : [
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4',
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8,opus',
-      'video/webm;codecs=vp8',
-      'video/webm',
-    ];
+    // Pick MIME using requested format
+    const candidates = getCandidateMimeTypes(format, true);
     const defaultMime = (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('video/mp4')) ? 'video/mp4' : 'video/webm';
     this._mimeType = candidates.find(t => {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
@@ -1646,8 +1673,8 @@ export class AsciliLiveRecorder {
 
     if (!stream) {
       this._directStream = false;
-      const targetW = resInfo?.outputW || (resolution === '1440p' ? 2560 : resolution === '1080p' ? 1920 : 1280);
-      const targetH = resInfo?.outputH || (resolution === '1440p' ? 1440 : resolution === '1080p' ? 1080 : 720);
+      const targetW = makeEven(resInfo?.outputW || (resolution === '4k' ? 3840 : resolution === '1440p' ? 2560 : resolution === '1080p' ? 1920 : 1280));
+      const targetH = makeEven(resInfo?.outputH || (resolution === '4k' ? 2160 : resolution === '1440p' ? 1440 : resolution === '1080p' ? 1080 : 720));
       this._canvas.width  = targetW;
       this._canvas.height = targetH;
 
@@ -1675,9 +1702,11 @@ export class AsciliLiveRecorder {
       }
     } catch {}
 
-    const effectiveW = this._canvas.width || asciiCanvas?.width || 2560;
-    const bitsPerSecond = effectiveW >= 2400 ? 16_000_000
-                        : effectiveW >= 1500 ? 8_000_000
+    const maxDim = Math.max(this._canvas.width || 0, this._canvas.height || 0, asciiCanvas?.width || 0, asciiCanvas?.height || 0, 1920);
+    const bitsPerSecond = maxDim >= 3600 ? 25_000_000
+                        : maxDim >= 2400 ? 16_000_000
+                        : maxDim >= 1800 ? 12_000_000
+                        : maxDim >= 1200 ? 6_000_000
                         : 4_000_000;
 
     this._chunks = [];

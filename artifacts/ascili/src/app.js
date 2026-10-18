@@ -1,5 +1,5 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine } from './exporter.js';
+import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine, getCandidateMimeTypes, RESOLUTIONS } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -564,11 +564,17 @@ async function startLiveRecording() {
   if (liveRecorder.running) { stopLiveRecording(); return; }
 
   readConfig();
-  const mimeType = detectMime();
+  const format = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
+  const mimeType = detectMime(format);
   const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
   const recordExtension = dlRecordVideo?.querySelector('.dl-ext');
   if (recordExtension) recordExtension.textContent = `.${extension}`;
-  const filename = `ascili-rec-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
+  const targetResolution = cvCfgRes?.value || '1080p';
+  const codecTag = format.includes('h265') ? 'h265'
+                 : format.includes('h264') ? 'h264'
+                 : format.includes('vp9') ? 'vp9'
+                 : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const filename = `ascili-rec-${targetResolution}-${codecTag}-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
   let writable = null;
   let temporaryExport = null;
 
@@ -586,10 +592,10 @@ async function startLiveRecording() {
     if (temporaryExport) writable = temporaryExport.writable;
   }
 
-  const targetResolution = cvCfgRes?.value || '1440p';
   liveRecorder.startRecording(cfg, {
     targetFps: cfg.fps || 60,
     resolution: targetResolution,
+    format,
     videoWidth:  sourceVideo.videoWidth  || 640,
     videoHeight: sourceVideo.videoHeight || 480,
     writable,
@@ -1510,8 +1516,9 @@ const cvWarningText    = $('cvWarningText');
 const cvCfgColor       = $('cvCfgColor');
 const cvCfgChars       = $('cvCfgChars');
 const cvCfgCols        = $('cvCfgCols');
-const cvCfgFont        = $('cvCfgFont');
-const cvCfgFmt         = $('cvCfgFmt');
+const cvCfgFormat      = $('cvCfgFormat') || $('cvCfgFmt');
+const cvCfgFmt         = cvCfgFormat;
+const rowVideoFormat   = $('rowVideoFormat') || (cvCfgFormat ? cvCfgFormat.closest('.cv-stat-row') : null);
 const cvCfgRes         = $('cvCfgRes');
 const cvCfgFpsOverride = $('cvCfgFpsOverride');
 const cvExportType     = $('cvExportType');
@@ -1599,7 +1606,13 @@ function estimateVideoBytes(duration, cols, videoWidth, videoHeight, resolution)
   const res = computeFontForResolution(cols, videoWidth, videoHeight, resolution);
   const fontSize = res?.fontSize ?? cfg.fontSize ?? 10;
   const canvasWidth = res?.outputW ?? Math.ceil(cols * fontSize * 0.601);
-  const bitrate = canvasWidth >= 2400 ? 16_000_000 : canvasWidth >= 1500 ? 8_000_000 : 4_000_000;
+  const canvasHeight = res?.outputH ?? Math.round(canvasWidth * ((videoHeight || 480) / (videoWidth || 640)));
+  const maxDim = Math.max(canvasWidth, canvasHeight);
+  const bitrate = maxDim >= 3600 ? 25_000_000
+                : maxDim >= 2400 ? 16_000_000
+                : maxDim >= 1800 ? 12_000_000
+                : maxDim >= 1200 ? 6_000_000
+                : 4_000_000;
   return bitrate * duration / 8;
 }
 
@@ -1675,6 +1688,9 @@ function updateExportModeUI() {
       ? `WebVTT (.vtt) encodes ASCII frames as web-standard cues with ${speedMult.toFixed(1)}× accelerated playback.`
       : `SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with ${speedMult.toFixed(1)}× accelerated playback.`;
   }
+  if (rowVideoFormat) {
+    rowVideoFormat.style.display = (isSubtitle || isGif) ? 'none' : 'flex';
+  }
   cvCfgRes.closest('.cv-stat-row').style.display = (isSubtitle || isGif) ? 'none' : '';
   const cols = isSubtitle
     ? (cvSourceVideo
@@ -1688,19 +1704,23 @@ function updateExportModeUI() {
     : isGif
     ? `${cols} cols · ${selectedFps} FPS`
     : `${cfg.cols} cols`;
-  cvCfgFmt.textContent = isYtt
-    ? 'YouTube Timed Text (.ytt) XML'
-    : isYoutube
-    ? 'YouTube Captions (.vtt) text'
-    : isAss
-    ? 'Advanced SubStation Alpha (.ass) text'
-    : isVtt
-    ? 'WebVTT (.vtt) text'
-    : isSrt
-    ? 'SRT (.srt) text'
-    : isGif
-    ? 'Animated GIF (.gif)'
-    : (detectMime().includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)');
+  if (cvCfgFmt && cvCfgFmt.tagName === 'SPAN') {
+    const activeFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
+    const activeMime = detectMime(activeFormat);
+    cvCfgFmt.textContent = isYtt
+      ? 'YouTube Timed Text (.ytt) XML'
+      : isYoutube
+      ? 'YouTube Captions (.vtt) text'
+      : isAss
+      ? 'Advanced SubStation Alpha (.ass) text'
+      : isVtt
+      ? 'WebVTT (.vtt) text'
+      : isSrt
+      ? 'SRT (.srt) text'
+      : isGif
+      ? 'Animated GIF (.gif)'
+      : (activeMime.includes('mp4') ? 'MP4' : 'WebM');
+  }
   const saveLabel = $('cvSaveLabel');
   if (saveLabel) saveLabel.textContent = isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : isGif ? 'Download Animated GIF' : 'Download Video';
 }
@@ -1741,28 +1761,16 @@ function charSetLabel(cs) {
   return entry ? entry[0].charAt(0).toUpperCase() + entry[0].slice(1) : 'Custom';
 }
 
-function detectMime() {
-  const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
-  const candidates = isLinux ? [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp8',
-    'video/webm',
-    'video/mp4;codecs=avc1,mp4a.40.2',
-    'video/mp4;codecs=avc1',
-    'video/mp4',
-  ] : [
-    'video/mp4;codecs=avc1,mp4a.40.2',
-    'video/mp4;codecs=avc1',
-    'video/mp4',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
-  return candidates.find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || 'video/webm';
+function detectMime(requestedFormat = (cvCfgFormat?.value || 'mp4-h264')) {
+  const candidates = getCandidateMimeTypes(requestedFormat, true);
+  const found = candidates.find(t => {
+    try {
+      return MediaRecorder.isTypeSupported(t);
+    } catch {
+      return false;
+    }
+  });
+  return found || 'video/webm';
 }
 
 async function chooseVideoFile(mimeType, suggestedName) {
@@ -1901,8 +1909,11 @@ function cvRefreshSettings() {
   cvCfgChars.textContent = charSetLabel(cfg.charSet);
   cvCfgCols.textContent  = cfg.cols + ' cols';
   cvCfgFont.textContent  = cfg.fontSize + 'px';
-  const mime = detectMime();
-  cvCfgFmt.textContent   = mime.includes('mp4') ? 'MP4 (H.264)' : 'WebM (VP9)';
+  const selectedFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
+  const mime = detectMime(selectedFormat);
+  if (cvCfgFmt && cvCfgFmt.tagName === 'SPAN') {
+    cvCfgFmt.textContent = mime.includes('mp4') ? 'MP4' : 'WebM';
+  }
   cvMimeType = mime;
   if (cvCfgFpsOverride && cfg.fps) {
     const fpsVal = String(cfg.fps);
@@ -2007,7 +2018,7 @@ function cvSetFile(file) {
   cvSourceVideo.load();
 }
 
-[cvCfgRes, cvCfgFpsOverride, cvExportType].forEach(control => {
+[cvCfgFormat, cvCfgRes, cvCfgFpsOverride, cvExportType].filter(Boolean).forEach(control => {
   control.addEventListener('change', () => {
     updateExportModeUI();
     updateLongVideoWarning();
@@ -2131,7 +2142,8 @@ cvStart.addEventListener('click', async () => {
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
   const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
-  const resolution = cvCfgRes.value || '1440p';
+  const resolution = cvCfgRes.value || '1080p';
+  const videoFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
   const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
     ? cvSourceVideo.duration
     : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
@@ -2151,15 +2163,41 @@ cvStart.addEventListener('click', async () => {
     ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : estimateVideoBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, resolution);
   const memoryExportLimit = (isSubtitle ? 96 : 192) * 1024 * 1024;
-  const mimeType = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : isGif ? 'image/gif' : detectMime();
+  const mimeType = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : isGif ? 'image/gif' : detectMime(videoFormat);
   const extension = isYtt ? 'ytt' : isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : isGif ? 'gif' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const codecTag = videoFormat.includes('h265') ? 'h265'
+                 : videoFormat.includes('h264') ? 'h264'
+                 : videoFormat.includes('vp9') ? 'vp9'
+                 : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
   const filename = isYtt
-    ? `youtube-timedtext-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.ytt`
+    ? `youtube-timedtext-${ts}.ytt`
     : isYoutube
-    ? `youtube-ascii-captions-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.vtt`
+    ? `youtube-ascii-captions-${ts}.vtt`
     : isGif
-    ? `ascili-animated-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.gif`
-    : `ascili-converted-${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.${extension}`;
+    ? `ascili-animated-${ts}.gif`
+    : `ascili-${resolution}-${codecTag}-${ts}.${extension}`;
+
+  let writable = null;
+  let temporaryExport = null;
+
+  if (!isSubtitle && !isGif) {
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        writable = await chooseVideoFile(mimeType, filename);
+        if (writable === false) return;
+      } catch {
+        writable = null;
+      }
+    }
+    if (!writable) {
+      temporaryExport = await createTemporaryExportFile(filename, mimeType, estimatedOutputBytes);
+      if (temporaryExport) {
+        writable = temporaryExport.writable;
+        cvTemporaryExport = temporaryExport;
+      }
+    }
+  }
 
   cvProgressSection.style.display = 'block';
   if (cvPreviewSection) cvPreviewSection.style.display = 'block';
@@ -2316,6 +2354,7 @@ cvStart.addEventListener('click', async () => {
   cvExporter.start(cvSourceVideo, cfg, {
     targetFps,
     resolution,
+    format: videoFormat,
     writable,
     maxBufferedBytes: Infinity,
     onProgress(pct) {
@@ -2360,10 +2399,29 @@ cvStart.addEventListener('click', async () => {
 
       cvDoneSection.style.display = 'flex';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  ${ext.toUpperCase()}  ·  ${resolution.toUpperCase()}  ·  ${targetFps} FPS  ·  ${cfg.cols} cols`;
+      const codecLabel = /hevc|hvc1|hev1/i.test(mimeType) ? 'H.265 / HEVC'
+                       : /avc1|mp4/i.test(mimeType) ? 'H.264 / AVC'
+                       : /vp9/i.test(mimeType) ? 'VP9'
+                       : 'VP8';
+      const resLabel = resolution.toUpperCase();
+      const fileSize = blob?.size || estimatedOutputBytes;
+      cvDoneMeta.textContent = `${fmtBytes(fileSize)} · ${ext.toUpperCase()} (${codecLabel}) · ${resLabel} · ${targetFps} FPS · ${cfg.cols} cols`;
+
+      if (cvTemporaryExport) {
+        try {
+          await cvTemporaryExport.prepareDownload();
+        } catch (err) {
+          console.warn('prepareDownload error:', err);
+        }
+      }
+
       showToast('Video conversion ready! Click Download Video.');
       try {
-        if (blob) download(filename, blob, mimeType);
+        if (cvTemporaryExport) {
+          cvTemporaryExport.download();
+        } else if (blob) {
+          download(filename, blob, mimeType);
+        }
       } catch {}
     },
     onError(msg) {
@@ -2409,7 +2467,19 @@ cvSave.addEventListener('click', () => {
   const isGif = cvExportType?.value === 'gif' || cvMimeType.includes('gif');
   const ext = (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : isGif ? 'gif' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
-  const filename = cvExportType?.value === 'ytt' ? `youtube-timedtext-${ts}.ytt` : cvExportType?.value === 'youtube' ? `youtube-ascii-captions-${ts}.vtt` : isGif ? `ascili-animated-${ts}.gif` : `ascili-${ts}.${ext}`;
+  const resolution = cvCfgRes?.value || '1080p';
+  const videoFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
+  const codecTag = videoFormat.includes('h265') ? 'h265'
+                 : videoFormat.includes('h264') ? 'h264'
+                 : videoFormat.includes('vp9') ? 'vp9'
+                 : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
+  const filename = cvExportType?.value === 'ytt'
+    ? `youtube-timedtext-${ts}.ytt`
+    : cvExportType?.value === 'youtube'
+    ? `youtube-ascii-captions-${ts}.vtt`
+    : isGif
+    ? `ascili-animated-${ts}.gif`
+    : `ascili-${resolution}-${codecTag}-${ts}.${ext}`;
   try {
     download(filename, cvBlob, cvMimeType);
     showToast(ext === 'ytt' ? 'YouTube Timed Text (.ytt) saved' : cvExportType?.value === 'youtube' ? 'YouTube captions saved' : isGif ? 'Animated GIF saved' : ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');

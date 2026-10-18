@@ -373,12 +373,21 @@
             <div class="cv-stat-row"><span>Character set</span><span class="cv-val" id="cvCfgChars">Standard</span></div>
             <div class="cv-stat-row"><span>Output width</span><span class="cv-val" id="cvCfgCols">80 cols</span></div>
             <div class="cv-stat-row"><span>Font size</span><span class="cv-val" id="cvCfgFont">10px</span></div>
-            <div class="cv-stat-row"><span>Format</span><span class="cv-val" id="cvCfgFmt">WebM</span></div>
+            <label class="cv-stat-row" for="cvCfgFormat" id="rowVideoFormat"><span>Video format</span>
+              <select class="setting-select cv-select" id="cvCfgFormat" aria-label="Video export format and codec">
+                <option value="mp4-h264" selected>MP4 (H.264 / AVC)</option>
+                <option value="mp4-h265">MP4 (H.265 / HEVC)</option>
+                <option value="webm-vp9">WebM (VP9)</option>
+                <option value="auto">Auto (Best for Device)</option>
+              </select>
+            </label>
             <label class="cv-stat-row" for="cvCfgRes"><span>Resolution</span>
               <select class="setting-select cv-select" id="cvCfgRes">
-                <option value="auto">Auto</option><option value="720p">720p</option>
-                <option value="1080p">1080p</option>
-                <option value="1440p" selected>1440p (2K)</option>
+                <option value="auto">Auto</option>
+                <option value="720p">720p (HD)</option>
+                <option value="1080p" selected>1080p (Full HD)</option>
+                <option value="1440p">1440p (2K)</option>
+                <option value="4k">4K (2160p)</option>
               </select>
             </label>
             <label class="cv-stat-row" for="cvCfgFpsOverride"><span>Frame rate</span>
@@ -394,7 +403,7 @@
             </label>
             <label class="cv-stat-row" for="cvExportType"><span>Export type</span>
               <select class="setting-select cv-select" id="cvExportType">
-                <option value="video" selected>Rendered video</option>
+                <option value="video" selected>Rendered video (.mp4 / .webm)</option>
                 <option value="gif">Animated GIF (.gif)</option>
                 <option value="ytt">YouTube Timed Text (.ytt) - 80/100 cols (Color & 24 FPS, max 20MB)</option>
                 <option value="youtube">YouTube Captions (.vtt)</option>
