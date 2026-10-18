@@ -1,7 +1,6 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
 import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
-import { StudioController } from './studio/studio-controller.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
@@ -2324,14 +2323,6 @@ document.addEventListener('keydown', e => {
   // Ignore when focus is inside a text input or select
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
 
-  if (currentAppMode === 'studio') {
-    if (e.key === ' ' && studioInstance) {
-      e.preventDefault();
-      studioInstance.timeline?.togglePlay();
-    }
-    return;
-  }
-
   // Escape closes the converter modal
   if (e.key === 'Escape') {
     if (cvOverlay.classList.contains('open')) {
@@ -2387,84 +2378,6 @@ document.addEventListener('keydown', e => {
 
 applyPreset('classic');
 readConfig();
-
-// ─── Dual-Mode Architecture: Live Streamer vs 3D ASCII Typography Studio ────
-
-let studioInstance = null;
-let currentAppMode = 'streamer';
-
-const modeBtnStreamer = $('modeBtnStreamer');
-const modeBtnStudio = $('modeBtnStudio');
-const mainLayoutEl = $('mainLayout');
-const studioRootEl = $('studioRoot');
-const sourceBarEl = document.querySelector('.source-bar');
-const btnSwitchToStudio = $('btnSwitchToStudio');
-
-function setAppMode(mode) {
-  try {
-    currentAppMode = mode;
-    if (mode === 'studio') {
-      // If streamer video is running, pause to conserve system CPU
-      if (typeof state !== 'undefined' && state.running && !state.paused) {
-        try { togglePause(); } catch {}
-      }
-      if (mainLayoutEl) mainLayoutEl.style.display = 'none';
-      if (presetBar) presetBar.style.display = 'none';
-      if (sourceBarEl) sourceBarEl.style.display = 'none';
-
-      if (studioRootEl) {
-        studioRootEl.style.display = 'flex';
-        if (!studioInstance) {
-          studioInstance = new StudioController(studioRootEl);
-        }
-      }
-
-      modeBtnStreamer?.classList.remove('active');
-      modeBtnStudio?.classList.add('active');
-      window.location.hash = '#studio';
-    } else {
-      if (studioRootEl) {
-        studioRootEl.style.display = 'none';
-        if (studioInstance && studioInstance.comp.isPlaying) {
-          studioInstance.timeline?.pause();
-        }
-      }
-      if (mainLayoutEl) mainLayoutEl.style.display = 'flex';
-      if (presetBar) presetBar.style.display = '';
-      if (sourceBarEl) sourceBarEl.style.display = '';
-
-      modeBtnStudio?.classList.remove('active');
-      modeBtnStreamer?.classList.add('active');
-      if (window.location.hash === '#studio') {
-        window.location.hash = '#streamer';
-      }
-    }
-  } catch (err) {
-    console.error('[ASCILI] setAppMode error:', err);
-  }
-}
-
-// Make setAppMode accessible globally
-if (typeof window !== 'undefined') {
-  window.setAppMode = setAppMode;
-}
-
-modeBtnStreamer?.addEventListener('click', () => setAppMode('streamer'));
-modeBtnStudio?.addEventListener('click', () => setAppMode('studio'));
-btnSwitchToStudio?.addEventListener('click', () => setAppMode('studio'));
-
-// Auto-switch on hash change or initial load (#studio)
-window.addEventListener('hashchange', () => {
-  if (window.location.hash === '#studio') {
-    setAppMode('studio');
-  } else if (window.location.hash === '#streamer') {
-    setAppMode('streamer');
-  }
-});
-
-if (window.location.hash === '#studio') {
-  setAppMode('studio');
-}
 
 // ─── PWA Service Worker Registration ──────────────────────────────────────────
 
