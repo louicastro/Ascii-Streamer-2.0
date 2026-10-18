@@ -2097,3 +2097,285 @@ export class AsciliGifVideoExporter {
   }
 }
 
+// ─── AsciliHtmlExporter ─────────────────────────────────────────────────────
+// Exports an interactive standalone HTML player file with playback controls.
+
+export class AsciliHtmlExporter {
+  constructor() {
+    this._running = false;
+    this._aborted = false;
+    this._frames = [];
+    this._cleanup = null;
+    this._wakeLock = null;
+  }
+
+  start(videoEl, cfg, opts = {}) {
+    const {
+      targetFps = 15,
+      maxFrames = 1200,
+      onProgress,
+      onComplete,
+      onError
+    } = opts;
+
+    if (this._running) return;
+    this._running = true;
+    this._aborted = false;
+    this._frames = [];
+
+    const rawDuration = videoEl.duration;
+    const duration = (Number.isFinite(rawDuration) && rawDuration > 0) ? rawDuration : 10;
+    const fps = Math.min(30, Math.max(5, targetFps));
+    const totalFrames = Math.min(maxFrames, Math.max(1, Math.ceil(duration * fps)));
+    const cols = Math.min(120, Math.max(20, Math.round(cfg.cols || 80)));
+    const vw = videoEl.videoWidth || 640;
+    const vh = videoEl.videoHeight || 480;
+    const rows = Math.max(1, Math.round(cols * (vh / vw) * 0.45));
+
+    const sampleCanvas = document.createElement('canvas');
+    sampleCanvas.width = cols;
+    sampleCanvas.height = rows;
+    const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+    if (!sampleCtx) {
+      onError?.('Could not create sampling canvas context');
+      return;
+    }
+
+    const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
+    const numChars = chars.length;
+    const invert = Boolean(cfg.invertChars);
+    const bgColor = cfg.bgColor || '#0a0a0c';
+
+    try {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(lock => { this._wakeLock = lock; }).catch(() => {});
+      }
+    } catch {}
+
+    const frameInterval = duration / totalFrames;
+    let currentFrame = 0;
+    let finishing = false;
+
+    const finish = () => {
+      if (finishing) return;
+      finishing = true;
+      this._running = false;
+      this._cleanup?.();
+      this._wakeLock?.release().catch(() => {});
+      this._wakeLock = null;
+
+      if (this._aborted) {
+        this._frames = [];
+        return;
+      }
+
+      const framesJson = JSON.stringify(this._frames);
+      const isPaper = bgColor === '#ffffff' || bgColor === 'white';
+      const defaultBg = isPaper ? '#ffffff' : '#0a0a0c';
+      const defaultFg = isPaper ? '#111111' : (cfg.monoColor || '#39ff52');
+
+      const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video2Chars ASCII Player (${cols}x${rows})</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: ${defaultBg};
+    color: ${defaultFg};
+    font-family: ui-monospace, "Courier New", Courier, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    transition: background 0.2s, color 0.2s;
+  }
+  #player {
+    font-size: 8px;
+    line-height: 1.0;
+    letter-spacing: 0;
+    white-space: pre;
+    user-select: none;
+    max-width: 98vw;
+    max-height: 80vh;
+    overflow: auto;
+    border: 1px solid rgba(128,128,128,0.25);
+    border-radius: 8px;
+    padding: 8px;
+    background: inherit;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .controls {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    background: rgba(128,128,128,0.12);
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  button, select {
+    background: #1c2333;
+    color: #fff;
+    border: 1px solid #3b82f6;
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #2563eb; }
+  input[type=range] { width: 180px; cursor: pointer; }
+  .badge { opacity: 0.8; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<div class="controls">
+  <button id="btnPlay">Pause</button>
+  <input type="range" id="seeker" min="0" max="${this._frames.length - 1}" value="0">
+  <span class="badge" id="frameMeta">Frame: 1 / ${this._frames.length}</span>
+  <label><input type="checkbox" id="chkLoop" checked> Loop</label>
+  <select id="selSpeed">
+    <option value="0.5">0.5×</option>
+    <option value="1.0" selected>1.0×</option>
+    <option value="1.5">1.5×</option>
+    <option value="2.0">2.0×</option>
+  </select>
+  <button id="btnTheme" title="Toggle Light/Dark Theme">Paper / Dark</button>
+</div>
+<script>
+  const frames = ${framesJson};
+  let current = 0;
+  let playing = true;
+  let fps = ${fps};
+  let speed = 1.0;
+  let timer = null;
+
+  const player = document.getElementById('player');
+  const seeker = document.getElementById('seeker');
+  const btnPlay = document.getElementById('btnPlay');
+  const meta = document.getElementById('frameMeta');
+  const loop = document.getElementById('chkLoop');
+  const selSpeed = document.getElementById('selSpeed');
+  const btnTheme = document.getElementById('btnTheme');
+
+  function render(idx) {
+    current = Math.max(0, Math.min(frames.length - 1, idx));
+    player.textContent = frames[current] || '';
+    seeker.value = current;
+    meta.textContent = 'Frame: ' + (current + 1) + ' / ' + frames.length;
+  }
+
+  function startTimer() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(() => {
+      if (!playing) return;
+      current++;
+      if (current >= frames.length) {
+        if (loop.checked) current = 0;
+        else { playing = false; btnPlay.textContent = 'Play'; return; }
+      }
+      render(current);
+    }, 1000 / (fps * speed));
+  }
+
+  btnPlay.addEventListener('click', () => {
+    playing = !playing;
+    btnPlay.textContent = playing ? 'Pause' : 'Play';
+  });
+
+  seeker.addEventListener('input', e => {
+    render(parseInt(e.target.value, 10));
+  });
+
+  selSpeed.addEventListener('change', () => {
+    speed = parseFloat(selSpeed.value) || 1.0;
+    startTimer();
+  });
+
+  let isDark = ${isPaper ? 'false' : 'true'};
+  btnTheme.addEventListener('click', () => {
+    isDark = !isDark;
+    document.body.style.background = isDark ? '#0a0a0c' : '#ffffff';
+    document.body.style.color = isDark ? '#39ff52' : '#111111';
+  });
+
+  render(0);
+  startTimer();
+</script>
+</body>
+</html>`;
+
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      onComplete?.(blob, 'text/html;charset=utf-8', { cols, rows, frames: this._frames.length });
+    };
+
+    const processTick = () => {
+      if (!this._running || finishing) return;
+      if (currentFrame >= totalFrames) {
+        finish();
+        return;
+      }
+
+      sampleCtx.drawImage(videoEl, 0, 0, cols, rows);
+      const imgData = sampleCtx.getImageData(0, 0, cols, rows);
+      const data = imgData.data;
+
+      let frameText = '';
+      for (let r = 0; r < rows; r++) {
+        if (r > 0) frameText += '\n';
+        const offset = r * cols * 4;
+        for (let c = 0; c < cols; c++) {
+          const idx = offset + c * 4;
+          const lum = (0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]) / 255;
+          let chIdx = Math.round(lum * (numChars - 1));
+          if (invert) chIdx = (numChars - 1) - chIdx;
+          frameText += chars[chIdx] || ' ';
+        }
+      }
+
+      this._frames.push(frameText);
+      currentFrame++;
+
+      const pct = currentFrame / totalFrames;
+      onProgress?.(pct, currentFrame, totalFrames);
+
+      if (currentFrame < totalFrames) {
+        videoEl.currentTime = currentFrame * frameInterval;
+      } else {
+        finish();
+      }
+    };
+
+    const onSeeked = () => {
+      if (this._running && !finishing) {
+        processTick();
+      }
+    };
+
+    this._cleanup = () => {
+      videoEl.removeEventListener('seeked', onSeeked);
+    };
+
+    videoEl.addEventListener('seeked', onSeeked);
+    videoEl.currentTime = 0;
+  }
+
+  stop() {
+    this._aborted = true;
+    this._running = false;
+    this._cleanup?.();
+    this._wakeLock?.release().catch(() => {});
+    this._wakeLock = null;
+    this._frames = [];
+  }
+}
+
+

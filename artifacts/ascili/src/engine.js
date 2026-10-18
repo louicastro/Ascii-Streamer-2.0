@@ -5,8 +5,9 @@ export const CHAR_SETS = {
   extended:  ' .\'`^",:;Il!i><~+_-?][}{1)(|\\tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$',
   block:     ' \u2591\u2592\u2593\u2588',
   minimal:   ' .oO0',
-  braille:   ' \u2801\u2802\u2803\u2804\u2808\u280a\u280b\u280c\u2810\u2813\u2814\u2818\u281b\u281c\u2820\u2828\u2830\u2838\u2840\u2848\u2850\u2858\u2860\u2868\u2870\u2880\u2881\u2882\u2884\u2888\u2890\u2898\u28a0\u28a8\u28b0\u28b8\u28c0\u28c8\u28d0\u28d8\u28e0\u28e8\u28f0\u28f8',
-  matrix:    ' .:=+*#MW&8%B@$',
+  braille:     ' \u2801\u2802\u2803\u2804\u2808\u280a\u280b\u280c\u2810\u2813\u2814\u2818\u281b\u281c\u2820\u2828\u2830\u2838\u2840\u2848\u2850\u2858\u2860\u2868\u2870\u2880\u2881\u2882\u2884\u2888\u2890\u2898\u28a0\u28a8\u28b0\u28b8\u28c0\u28c8\u28d0\u28d8\u28e0\u28e8\u28f0\u28f8',
+  matrix:      ' .:=+*#MW&8%B@$',
+  video2chars: ' .-1+*abcdefghijklmnopqrstuvwxyz<>()/{}[?234567890ABCDEFGHIKLMNOPQRSTUVWXYZ%&@#$',
 };
 
 // ─── ANSI Colour Tables (shared with exporter) ─────────────────────────────
@@ -372,6 +373,7 @@ uniform int   u_mirror;
 uniform int   u_ditherMode;
 uniform vec4  u_cropRect;
 uniform float u_charCount;
+uniform vec3  u_bgColor;
 
 vec3 adjustColor(vec3 c) {
   if (u_brightness != 0.0) {
@@ -471,7 +473,7 @@ void main() {
     color = floor(rgb * 5.0 + 0.5) / 5.0;
   }
 
-  vec3 finalColor = color * glyphAlpha;
+  vec3 finalColor = mix(u_bgColor, color, glyphAlpha);
 
   if (u_scanlines == 1) {
     float scan = sin(gl_FragCoord.y * 1.5) * 0.15;
@@ -576,6 +578,7 @@ export class AsciliWebGLRenderer {
     this._uDitherMode      = gl.getUniformLocation(this._program, 'u_ditherMode');
     this._uCropRect        = gl.getUniformLocation(this._program, 'u_cropRect');
     this._uCharCount       = gl.getUniformLocation(this._program, 'u_charCount');
+    this._uBgColor         = gl.getUniformLocation(this._program, 'u_bgColor');
 
     this._texVideo = gl.createTexture();
     this._texAtlas = gl.createTexture();
@@ -697,6 +700,11 @@ export class AsciliWebGLRenderer {
     gl.uniform3f(this._uMonoColor, monoRgb[0], monoRgb[1], monoRgb[2]);
     gl.uniform1i(this._uScanlines, config.scanlines ? 1 : 0);
 
+    const bgRgb = hexToRgbVec3(config.bgColor || '#000000');
+    if (this._uBgColor) {
+      gl.uniform3f(this._uBgColor, bgRgb[0], bgRgb[1], bgRgb[2]);
+    }
+
     const b = (config.brightness || 0) / 100.0;
     const cVal = ((config.contrast || 0) / 100.0) * 255.0;
     const cMult = (config.contrast || 0) !== 0 ? (259.0 * (cVal + 255.0)) / Math.max(0.001, (255.0 * (259.0 - cVal))) : 1.0;
@@ -800,13 +808,13 @@ export class AsciliCanvas2DRenderer {
     if (!this.ctx) throw new Error('Canvas 2D is unavailable');
   }
 
-  render(cols, rows, charGrid, colorGrid, atlas, isMono, monoColorHex, fontSize = 10) {
+  render(cols, rows, charGrid, colorGrid, atlas, isMono, monoColorHex, fontSize = 10, bgColor = '#000000') {
     const { ctx, canvas } = this;
     const charW = canvas.width > 0 && cols > 0 ? (canvas.width / cols) : (fontSize * 0.601);
     const charH = canvas.height > 0 && rows > 0 ? (canvas.height / rows) : fontSize;
     const fontPx = Math.max(1, Math.floor(charH * 0.95));
 
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = bgColor || '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.font = `bold ${fontPx}px "Courier New", monospace`;
     ctx.textBaseline = 'top';
@@ -1204,7 +1212,7 @@ export class AsciliEngine {
       try { this._canvas2d = new AsciliCanvas2DRenderer(this._currentTarget); } catch { this._canvas2d = null; }
     }
     if (this._canvas2d) {
-      this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || '#39ff52', config.fontSize || 10);
+      this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || '#39ff52', config.fontSize || 10, config.bgColor || '#000000');
     }
   }
 

@@ -1,5 +1,5 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine, getCandidateMimeTypes, RESOLUTIONS } from './exporter.js';
+import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, AsciliHtmlExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine, getCandidateMimeTypes, RESOLUTIONS } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -10,6 +10,7 @@ const PRESETS = {
   truecolor:  { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:80,  fontSize:10, fps:60, brightness:0,  contrast:0,   gamma:0,  saturation:20,  enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.30, adaptiveContrast:true },
   braille:    { colorMode:'grayscale',  charSet:'braille',  invertChars:false, cols:120, fontSize:10, fps:60, brightness:5,  contrast:15,  gamma:0,  saturation:0,   enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.25, adaptiveContrast:true },
   blocks:     { colorMode:'ansi256',    charSet:'block',    invertChars:false, cols:80,  fontSize:12, fps:60, brightness:0,  contrast:5,   gamma:0,  saturation:10,  enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.20, adaptiveContrast:true },
+  video2chars:{ colorMode:'truecolor',  charSet:'video2chars', invertChars:false, cols:100, fontSize:10, fps:60, brightness:0,  contrast:15,  gamma:0,  saturation:15,  enableEdgeDetection:false, edgeThreshold:0.16, temporalSmoothing:0.25, adaptiveContrast:true, bgColor:'#0a0a0c' },
 };
 
 // ─── DOM Refs ────────────────────────────────────────────────────────────────
@@ -99,6 +100,7 @@ const dlVideo       = $('dlVideo');
 // Settings inputs
 const selectColorMode   = $('selectColorMode');
 const selectCharSet     = $('selectCharSet');
+const selectBgColor     = $('selectBgColor');
 const customCharRow     = $('customCharRow');
 const rowCustomCharset  = $('rowCustomCharset');
 const inputCustomCharset = $('inputCustomCharset');
@@ -269,6 +271,7 @@ function showToast(msg) {
 
 function readConfig() {
   cfg.colorMode   = selectColorMode?.value || cfg.colorMode;
+  cfg.bgColor     = selectBgColor?.value || cfg.bgColor || '#0a0a0c';
   cfg.invertChars = checkInvert?.checked ?? false;
   cfg.cols        = Math.min(1000, Math.max(20, parseInt(rangeCols?.value, 10) || cfg.cols));
   cfg.fontSize    = Math.min(30, Math.max(1, parseInt(rangeFontSize?.value, 10) || cfg.fontSize));
@@ -276,6 +279,10 @@ function readConfig() {
   cfg.dithering   = selectDithering?.value || 'none';
   cfg.aspectRatio = selectAspectRatio?.value || 'auto';
   cfg.mirror      = chkMirror?.checked ?? false;
+
+  if (asciiContainer) {
+    asciiContainer.style.background = cfg.bgColor;
+  }
 
   if (btnMirror) {
     btnMirror.classList.toggle('active', cfg.mirror);
@@ -347,6 +354,7 @@ function applyPreset(name) {
   if (!p) return;
 
   if (selectColorMode) selectColorMode.value = p.colorMode;
+  if (selectBgColor) selectBgColor.value = p.bgColor || '#0a0a0c';
   if (selectCharSet) selectCharSet.value = p.charSet in CHAR_SETS ? p.charSet : 'standard';
   if (checkInvert) checkInvert.checked = p.invertChars;
   const presetCols = Math.min(1000, Math.max(20, p.cols));
@@ -1254,6 +1262,7 @@ if (checkTemporal) checkTemporal.addEventListener('change', () => readConfig());
 if (checkAdaptiveContrast) checkAdaptiveContrast.addEventListener('change', () => readConfig());
 
 selectColorMode.addEventListener('change', () => readConfig());
+selectBgColor?.addEventListener('change', () => readConfig());
 selectCharSet.addEventListener('change', () => {
   if (customCharRow) customCharRow.style.display = selectCharSet.value === 'custom' ? 'block' : 'none';
   readConfig();
@@ -1545,6 +1554,7 @@ const cvDropZone       = $('cvDropZone');
 const cvExporter = new AsciliVideoExporter(engine);
 const cvSrtExporter = new AsciliSrtExporter();
 const cvGifExporter = new AsciliGifVideoExporter(engine);
+const cvHtmlExporter = new AsciliHtmlExporter();
 const SRT_MAX_COLS = 40;
 const SRT_DEFAULT_FPS = 15;
 const SRT_SIZE_BUDGET = 950 * 1024 * 1024;
@@ -1664,6 +1674,7 @@ function chooseSrtCols(duration, requestedCols, videoWidth, videoHeight, fps = 1
 
 function updateExportModeUI() {
   const exportType = cvExportType.value;
+  const isHtml = exportType === 'html';
   const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
@@ -1671,14 +1682,17 @@ function updateExportModeUI() {
   const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
-  cvSrtNote.style.display = isSubtitle ? 'flex' : 'none';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
+  const isNonVideo = isSubtitle || isGif || isHtml;
+  cvSrtNote.style.display = (isSubtitle || isHtml) ? 'flex' : 'none';
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isHtml ? 15 : isSubtitle ? 15 : 60);
   const colorLabel = cfg.colorMode === 'monochrome'
     ? 'monochrome'
     : (cfg.colorMode === 'grayscale' ? 'grayscale' : cfg.colorMode === 'ansi16' ? '16 colors' : cfg.colorMode === 'ansi256' ? '256 colors' : 'color');
   if (cvSrtNote) {
     const speedMult = selectedFps <= 15 ? 3.0 : selectedFps <= 30 ? 2.5 : 2.0;
-    cvSrtNote.textContent = isYtt
+    cvSrtNote.textContent = isHtml
+      ? 'Standalone HTML Player exports a self-contained, offline-playable ASCII animation (Video2Chars Web Player).'
+      : isYtt
       ? `YouTube Timed Text (.ytt) uses native YouTube XML supporting full 80/100 cols, monospace font, ${colorLabel}, 24 FPS animation, and strict 20 MB size ceiling.`
       : isYoutube
       ? `YouTube Captions (.vtt) produces crash-proof 30-col × 4-row plain text at 2 FPS optimized for YouTube Studio limits.`
@@ -1689,25 +1703,31 @@ function updateExportModeUI() {
       : `SRT (.srt) encodes ASCII frames as styled cues for VLC & desktop players with ${speedMult.toFixed(1)}× accelerated playback.`;
   }
   if (rowVideoFormat) {
-    rowVideoFormat.style.display = (isSubtitle || isGif) ? 'none' : 'flex';
+    rowVideoFormat.style.display = isNonVideo ? 'none' : 'flex';
   }
-  cvCfgRes.closest('.cv-stat-row').style.display = (isSubtitle || isGif) ? 'none' : '';
+  cvCfgRes.closest('.cv-stat-row').style.display = isNonVideo ? 'none' : '';
   const cols = isSubtitle
     ? (cvSourceVideo
       ? chooseSrtCols(cvSourceVideo.duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, selectedFps, exportType)
       : (isYtt ? 80 : isYoutube ? 30 : isAss ? 160 : Math.min(SRT_MAX_COLS, cfg.cols || 40)))
     : isGif
     ? Math.min(cfg.cols || 80, 100)
+    : isHtml
+    ? Math.min(cfg.cols || 80, 120)
     : cfg.cols;
   cvCfgCols.textContent = isSubtitle
     ? `${cols} cols · ${selectedFps} FPS${isYtt ? ` · ${colorLabel} · max 20MB · font ${cfg.fontSize || 1}` : isYoutube ? ' · plain text' : isAss ? ' · 9px font' : ''}`
     : isGif
     ? `${cols} cols · ${selectedFps} FPS`
+    : isHtml
+    ? `${cols} cols · ${selectedFps} FPS (HTML)`
     : `${cfg.cols} cols`;
   if (cvCfgFmt && cvCfgFmt.tagName === 'SPAN') {
     const activeFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
     const activeMime = detectMime(activeFormat);
-    cvCfgFmt.textContent = isYtt
+    cvCfgFmt.textContent = isHtml
+      ? 'Standalone HTML (.html)'
+      : isYtt
       ? 'YouTube Timed Text (.ytt) XML'
       : isYoutube
       ? 'YouTube Captions (.vtt) text'
@@ -1722,7 +1742,7 @@ function updateExportModeUI() {
       : (activeMime.includes('mp4') ? 'MP4' : 'WebM');
   }
   const saveLabel = $('cvSaveLabel');
-  if (saveLabel) saveLabel.textContent = isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : isGif ? 'Download Animated GIF' : 'Download Video';
+  if (saveLabel) saveLabel.textContent = isHtml ? 'Download HTML Player' : isYtt ? `Download .ytt (${selectedFps} FPS)` : isYoutube ? 'Download YouTube .vtt' : isAss ? 'Download .ass' : isVtt ? 'Download .vtt' : isSrt ? 'Download .srt' : isGif ? 'Download Animated GIF' : 'Download Video';
 }
 
 function updateLongVideoWarning() {
@@ -1732,19 +1752,24 @@ function updateLongVideoWarning() {
   }
   const duration = cvSourceVideo.duration;
   const exportType = cvExportType.value;
+  const isHtml = exportType === 'html';
   const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
   const isYoutube = exportType === 'youtube';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isHtml ? 15 : isSubtitle ? 15 : 60);
   const fps = selectedFps;
   const cols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
     : isGif
     ? Math.min(cfg.cols || 80, 100)
+    : isHtml
+    ? Math.min(cfg.cols || 80, 120)
     : Math.min(1000, cfg.cols);
   const size = isGif
     ? Math.min(50 * 1024 * 1024, Math.round(duration * Math.min(20, fps) * 45000))
+    : isHtml
+    ? Math.min(30 * 1024 * 1024, Math.round(duration * fps * cols * 1.5))
     : isSubtitle
     ? estimateSrtBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, fps, exportType)
     : estimateVideoBytes(duration, cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, cvCfgRes.value);
@@ -2134,6 +2159,7 @@ cvStart.addEventListener('click', async () => {
   updateLongVideoWarning();
 
   const exportType = cvExportType.value;
+  const isHtml = exportType === 'html';
   const isGif = exportType === 'gif';
   const isSubtitle = exportType === 'srt' || exportType === 'vtt' || exportType === 'ass' || exportType === 'youtube' || exportType === 'ytt';
   const isYtt = exportType === 'ytt';
@@ -2141,36 +2167,42 @@ cvStart.addEventListener('click', async () => {
   const isAss = exportType === 'ass';
   const isVtt = exportType === 'vtt' || isYoutube;
   const isSrt = exportType === 'srt';
-  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
+  const selectedFps = parseFloat(cvCfgFpsOverride.value) || (isHtml ? 15 : isYtt ? 24 : isYoutube ? 2 : isGif ? 10 : isSubtitle ? 15 : 60);
   const resolution = cvCfgRes.value || '1080p';
   const videoFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
   const duration = (cvSourceVideo.duration && isFinite(cvSourceVideo.duration) && cvSourceVideo.duration > 0)
     ? cvSourceVideo.duration
     : ((sourceVideo && isFinite(sourceVideo.duration) && sourceVideo.duration > 0) ? sourceVideo.duration : 10);
-  const targetFps = isYoutube ? Math.min(5, selectedFps) : selectedFps;
+  const targetFps = isYoutube ? Math.min(5, selectedFps) : isHtml ? Math.min(24, Math.max(5, selectedFps)) : selectedFps;
   const exportCols = isSubtitle
     ? chooseSrtCols(duration, cfg.cols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
+    : isHtml
+    ? Math.min(cfg.cols || 100, 140)
     : isGif
     ? Math.min(cfg.cols || 80, 100)
     : cfg.cols;
-  const exportCfg = isSubtitle
+  const exportCfg = (isSubtitle || isHtml)
     ? { ...cfg, cols: exportCols, fontSize: isAss ? 9 : (cfg.fontSize || 10) }
     : cfg;
   const totalFrames = Math.max(1, Math.ceil(duration * targetFps));
-  const estimatedOutputBytes = isGif
+  const estimatedOutputBytes = isHtml
+    ? Math.min(100 * 1024 * 1024, Math.round(duration * targetFps * (exportCols * 50 + 200)))
+    : isGif
     ? Math.min(50 * 1024 * 1024, Math.round(duration * Math.min(20, targetFps) * 45000))
     : isSubtitle
     ? estimateSrtBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, targetFps, exportType)
     : estimateVideoBytes(duration, exportCols, cvSourceVideo.videoWidth, cvSourceVideo.videoHeight, resolution);
   const memoryExportLimit = (isSubtitle ? 96 : 192) * 1024 * 1024;
-  const mimeType = isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : isGif ? 'image/gif' : detectMime(videoFormat);
-  const extension = isYtt ? 'ytt' : isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : isGif ? 'gif' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
+  const mimeType = isHtml ? 'text/html;charset=utf-8' : isYtt ? 'application/xml;charset=utf-8' : isAss ? 'text/x-ssa;charset=utf-8' : isVtt ? 'text/vtt;charset=utf-8' : isSrt ? 'text/plain;charset=utf-8' : isGif ? 'image/gif' : detectMime(videoFormat);
+  const extension = isHtml ? 'html' : isYtt ? 'ytt' : isAss ? 'ass' : isVtt ? 'vtt' : isSrt ? 'srt' : isGif ? 'gif' : (mimeType.includes('mp4') ? 'mp4' : 'webm');
   const codecTag = videoFormat.includes('h265') ? 'h265'
                  : videoFormat.includes('h264') ? 'h264'
                  : videoFormat.includes('vp9') ? 'vp9'
                  : (mimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
-  const filename = isYtt
+  const filename = isHtml
+    ? `video2chars-player-${ts}.html`
+    : isYtt
     ? `youtube-timedtext-${ts}.ytt`
     : isYoutube
     ? `youtube-ascii-captions-${ts}.vtt`
@@ -2181,7 +2213,7 @@ cvStart.addEventListener('click', async () => {
   let writable = null;
   let temporaryExport = null;
 
-  if (!isSubtitle && !isGif) {
+  if (!isSubtitle && !isGif && !isHtml) {
     if (typeof window.showSaveFilePicker === 'function') {
       try {
         writable = await chooseVideoFile(mimeType, filename);
@@ -2220,6 +2252,66 @@ cvStart.addEventListener('click', async () => {
   cvStartProgressClock();
   if (cvPreviewCanvas && cvSourceVideo) {
     drawConverterPreview(cvSourceVideo, exportCfg);
+  }
+
+  if (isHtml) {
+    cvProgressSection.querySelector('.cv-section-label').textContent = 'VIDEO2CHARS HTML EXPORT PROGRESS';
+    try {
+      cvHtmlExporter.start(cvSourceVideo, exportCfg, {
+        targetFps,
+        maxFrames: totalFrames,
+        onProgress(pct, frameNum, frameTotal) {
+          cvCurrentProgress = pct;
+          cvProgressFrames.textContent = `${frameNum.toLocaleString()} / ${frameTotal.toLocaleString()} frames`;
+          cvProgressFill.style.width = (pct * 100).toFixed(1) + '%';
+          cvProgressPct.textContent = (pct * 100).toFixed(0) + '%';
+          cvUpdateProgressClock();
+
+          const now = performance.now();
+          if (!lastPreviewDraw || now - lastPreviewDraw >= 50 || frameNum === frameTotal) {
+            lastPreviewDraw = now;
+            if (cvPreviewCanvas && cvSourceVideo && cvSourceVideo.videoWidth) {
+              drawConverterPreview(cvSourceVideo, exportCfg);
+            }
+          }
+        },
+        async onComplete(blob, resultMime, result) {
+          cvStopProgressClock();
+          if (cvPreviewBadge) cvPreviewBadge.textContent = 'EXPORT COMPLETE ✓';
+          cvBlob = blob;
+          cvMimeType = resultMime || 'text/html;charset=utf-8';
+          cvStop.style.display = 'none';
+          cvSave.style.display = '';
+          if (saveLabel) {
+            saveLabel.textContent = 'Download HTML Player';
+          }
+          cvConvertAnother.style.display = '';
+          cvProgressFill.style.width = '100%';
+          cvProgressPct.textContent = '100%';
+          cvProgressEta.textContent = '';
+          cvProgressTime.textContent = 'Done';
+          cvProgressFrames.textContent = `${result?.frames || totalFrames} / ${result?.frames || totalFrames} frames`;
+          cvProgressSection.querySelector('.cv-section-label').textContent = 'VIDEO2CHARS HTML EXPORT COMPLETE';
+          cvDoneSection.style.display = 'flex';
+          cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  Standalone HTML Player  ·  ${targetFps} FPS  ·  ${result?.cols || exportCols} cols`;
+          showToast('Standalone HTML Player ready to download');
+          try {
+            if (blob) download(filename, blob, resultMime || 'text/html;charset=utf-8');
+          } catch {}
+        },
+        onError(message) {
+          if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
+          cvStop.style.display = 'none';
+          cvStart.style.display = '';
+          cvStart.disabled = false;
+          cvProgressEta.textContent = 'Error';
+          cvShowExportError(message);
+        },
+      });
+    } catch (error) {
+      cvShowExportError(error?.message || error);
+    }
+    return;
   }
 
   if (isSubtitle) {
@@ -2442,6 +2534,7 @@ cvStop.addEventListener('click', () => {
   if (cvExporter._running) cvExporter.stop();
   else if (cvSrtExporter._running) cvSrtExporter.stop();
   else if (cvGifExporter._running) cvGifExporter.stop();
+  else if (cvHtmlExporter._running) cvHtmlExporter.stop();
   cvStopProgressClock();
   cvStop.style.display  = 'none';
   cvStart.style.display = '';
@@ -2464,8 +2557,9 @@ cvSave.addEventListener('click', () => {
     showToast('Export file is not available to download. Please retry export.');
     return;
   }
+  const isHtml = cvExportType?.value === 'html' || cvMimeType.includes('html');
   const isGif = cvExportType?.value === 'gif' || cvMimeType.includes('gif');
-  const ext = (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : isGif ? 'gif' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
+  const ext = isHtml ? 'html' : (cvMimeType.includes('xml') || cvExportType?.value === 'ytt') ? 'ytt' : isGif ? 'gif' : (cvMimeType.includes('ssa') || cvMimeType.includes('ass')) ? 'ass' : cvMimeType.includes('vtt') ? 'vtt' : (cvMimeType.includes('subrip') || cvMimeType.includes('srt')) ? 'srt' : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
   const ts  = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
   const resolution = cvCfgRes?.value || '1080p';
   const videoFormat = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
@@ -2473,7 +2567,9 @@ cvSave.addEventListener('click', () => {
                  : videoFormat.includes('h264') ? 'h264'
                  : videoFormat.includes('vp9') ? 'vp9'
                  : (cvMimeType.includes('mp4') ? 'mp4' : 'webm');
-  const filename = cvExportType?.value === 'ytt'
+  const filename = isHtml
+    ? `video2chars-player-${ts}.html`
+    : cvExportType?.value === 'ytt'
     ? `youtube-timedtext-${ts}.ytt`
     : cvExportType?.value === 'youtube'
     ? `youtube-ascii-captions-${ts}.vtt`
@@ -2482,7 +2578,7 @@ cvSave.addEventListener('click', () => {
     : `ascili-${resolution}-${codecTag}-${ts}.${ext}`;
   try {
     download(filename, cvBlob, cvMimeType);
-    showToast(ext === 'ytt' ? 'YouTube Timed Text (.ytt) saved' : cvExportType?.value === 'youtube' ? 'YouTube captions saved' : isGif ? 'Animated GIF saved' : ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
+    showToast(isHtml ? 'Video2Chars HTML player saved' : ext === 'ytt' ? 'YouTube Timed Text (.ytt) saved' : cvExportType?.value === 'youtube' ? 'YouTube captions saved' : isGif ? 'Animated GIF saved' : ext === 'ass' ? 'ASS subtitles saved' : ext === 'vtt' ? 'WebVTT saved' : ext === 'srt' ? 'SRT saved' : 'Video saved');
   } catch (error) {
     cvShowExportError(error?.message || error);
   }
@@ -2508,11 +2604,12 @@ cvConvertAnother.addEventListener('click', () => {
 // Close on backdrop click
 cvOverlay.addEventListener('click', e => {
   if (e.target === cvOverlay) {
-    if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running) {
+    if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running || cvHtmlExporter._running) {
       if (!confirm('Stop the current conversion?')) return;
       if (cvExporter._running) cvExporter.stop();
       else if (cvSrtExporter._running) cvSrtExporter.stop();
       else if (cvGifExporter._running) cvGifExporter.stop();
+      else if (cvHtmlExporter._running) cvHtmlExporter.stop();
     }
     cvStopProgressClock();
     cvOverlay.classList.remove('open');
@@ -2529,11 +2626,12 @@ document.addEventListener('keydown', e => {
   // Escape closes the converter modal
   if (e.key === 'Escape') {
     if (cvOverlay.classList.contains('open')) {
-      if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running) {
+      if (cvExporter._running || cvSrtExporter._running || cvGifExporter._running || cvHtmlExporter._running) {
         if (!confirm('Stop the current conversion?')) return;
         if (cvExporter._running) cvExporter.stop();
         else if (cvSrtExporter._running) cvSrtExporter.stop();
         else if (cvGifExporter._running) cvGifExporter.stop();
+        else if (cvHtmlExporter._running) cvHtmlExporter.stop();
       }
       cvStopProgressClock();
       cvOverlay.classList.remove('open');
@@ -2569,11 +2667,12 @@ document.addEventListener('keydown', e => {
       break;
     case 'g': case 'G':
       e.preventDefault(); toggleScanlines(); break;
-    case '1': applyPreset('classic');   break;
-    case '2': applyPreset('matrix');    break;
-    case '3': applyPreset('truecolor'); break;
-    case '4': applyPreset('braille');   break;
-    case '5': applyPreset('blocks');    break;
+    case '1': applyPreset('classic');    break;
+    case '2': applyPreset('matrix');     break;
+    case '3': applyPreset('truecolor');  break;
+    case '4': applyPreset('braille');    break;
+    case '5': applyPreset('blocks');     break;
+    case '6': applyPreset('video2chars'); break;
   }
 });
 

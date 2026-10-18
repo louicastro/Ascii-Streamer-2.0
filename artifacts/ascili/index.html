@@ -39,6 +39,7 @@
       <button class="preset-btn" data-preset="truecolor" data-testid="preset-truecolor">[3] True Color</button>
       <button class="preset-btn" data-preset="braille" data-testid="preset-braille">[4] Braille Art</button>
       <button class="preset-btn" data-preset="blocks" data-testid="preset-blocks">[5] Block Pixels</button>
+      <button class="preset-btn" data-preset="video2chars" data-testid="preset-video2chars">[6] Video2Chars</button>
     </div>
 
     <div class="source-bar">
@@ -253,10 +254,21 @@
             <select class="setting-select" id="selectCharSet" data-testid="select-charset">
               <option value="standard">Standard</option>
               <option value="extended">Extended</option>
+              <option value="video2chars">Video2Chars (83 Chars)</option>
               <option value="block">Block</option>
               <option value="minimal">Minimal</option>
               <option value="braille">Braille</option>
               <option value="custom">Custom…</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="selectBgColor">Canvas Background</label>
+            <select class="setting-select" id="selectBgColor" aria-label="Canvas Background Theme">
+              <option value="#0a0a0c" selected>Dark Terminal (#0a0a0c)</option>
+              <option value="#ffffff">Video2Chars Paper (#ffffff)</option>
+              <option value="#050d1a">Deep Blue (#050d1a)</option>
+              <option value="#021206">Cyberpunk Green (#021206)</option>
             </select>
           </div>
 
@@ -404,6 +416,7 @@
             <label class="cv-stat-row" for="cvExportType"><span>Export type</span>
               <select class="setting-select cv-select" id="cvExportType">
                 <option value="video" selected>Rendered video (.mp4 / .webm)</option>
+                <option value="html">Standalone HTML Player (.html) - Video2Chars Web</option>
                 <option value="gif">Animated GIF (.gif)</option>
                 <option value="ytt">YouTube Timed Text (.ytt) - 80/100 cols (Color & 24 FPS, max 20MB)</option>
                 <option value="youtube">YouTube Captions (.vtt)</option>
