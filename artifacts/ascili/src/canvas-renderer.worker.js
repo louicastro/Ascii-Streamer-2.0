@@ -47,7 +47,20 @@ self.onmessage = ({ data }) => {
         if (mono) {
           line += ch;
         } else {
-          const next = `rgb(${pixels[p]},${pixels[p + 1]},${pixels[p + 2]})`;
+          let pr = pixels[p], pg = pixels[p + 1], pb = pixels[p + 2];
+          if (config.colorMode === 'grayscale') {
+            const gray = Math.round(lum * 255);
+            pr = gray; pg = gray; pb = gray;
+          } else if (config.colorMode === 'ansi16') {
+            pr = Math.round(Math.round(pr / 127.5) * 127.5);
+            pg = Math.round(Math.round(pg / 127.5) * 127.5);
+            pb = Math.round(Math.round(pb / 127.5) * 127.5);
+          } else if (config.colorMode === 'ansi256') {
+            pr = Math.round(Math.round(pr / 51) * 51);
+            pg = Math.round(Math.round(pg / 51) * 51);
+            pb = Math.round(Math.round(pb / 51) * 51);
+          }
+          const next = `rgb(${pr},${pg},${pb})`;
           if (next !== color) {
             if (run) {
               ctx.fillStyle = color;

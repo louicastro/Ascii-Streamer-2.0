@@ -333,6 +333,10 @@ function readConfig() {
   // Show/hide color swatches based on monochrome mode
   if (colorSwatchRow) colorSwatchRow.style.display = cfg.colorMode === 'monochrome' ? 'block' : 'none';
 
+  if (statMode && cfg.colorMode) {
+    statMode.textContent = cfg.colorMode.toUpperCase();
+  }
+
   // Apply font size to output
   if (asciiOutput) {
     asciiOutput.style.fontSize    = cfg.fontSize + 'px';
@@ -351,6 +355,21 @@ function readConfig() {
 
   state.currentScale = 0;
   engine.reset();
+
+  if ((!state.running || state.paused) && sourceVideo && sourceVideo.readyState >= 2 && asciiCanvas && asciiCanvas.width > 0) {
+    const targetCols = Math.max(20, Math.floor(cfg.cols * (state.qualityScale || 1.0)));
+    const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
+    const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
+      ...cfg,
+      cols: targetCols,
+      rows: expectedRows,
+      monoColor: state.monoColor,
+      scanlines: state.scanlinesOn,
+    });
+    if (dims.rendered !== false) {
+      updateAsciiLayout(dims.rows, dims.cols);
+    }
+  }
 }
 
 // ─── Apply Preset ────────────────────────────────────────────────────────────
@@ -429,7 +448,10 @@ if (inputCustomColor) {
 
 // ─── Settings Controls Listeners ─────────────────────────────────────────────
 
-selectColorMode?.addEventListener('change', () => readConfig());
+selectColorMode?.addEventListener('change', () => {
+  readConfig();
+  showToast('Color: ' + (selectColorMode.selectedOptions[0]?.text || selectColorMode.value));
+});
 selectCharSet?.addEventListener('change', () => readConfig());
 inputCustomCharset?.addEventListener('input', () => {
   if (selectCharSet?.value === 'custom') {
@@ -1308,7 +1330,6 @@ if (checkAiEdge) checkAiEdge.addEventListener('change', () => readConfig());
 if (checkTemporal) checkTemporal.addEventListener('change', () => readConfig());
 if (checkAdaptiveContrast) checkAdaptiveContrast.addEventListener('change', () => readConfig());
 
-selectColorMode.addEventListener('change', () => readConfig());
 selectBgColor?.addEventListener('change', () => readConfig());
 selectCharSet.addEventListener('change', () => {
   if (customCharRow) customCharRow.style.display = selectCharSet.value === 'custom' ? 'block' : 'none';

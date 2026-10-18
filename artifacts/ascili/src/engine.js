@@ -469,7 +469,9 @@ void main() {
     color = u_monoColor;
   } else if (u_colorMode == 1) {
     color = vec3(lum);
-  } else if (u_colorMode == 2 || u_colorMode == 3) {
+  } else if (u_colorMode == 2) {
+    color = floor(rgb * 2.0 + 0.5) / 2.0;
+  } else if (u_colorMode == 3) {
     color = floor(rgb * 5.0 + 0.5) / 5.0;
   }
 
@@ -1099,7 +1101,7 @@ export class BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return {
-      colorMode: this.colorMode,
+      colorMode: userConfig.colorMode || this.colorMode,
       charSet: userConfig.charSet || this.defaultCharSet,
       monoColor: userConfig.monoColor || this.defaultMonoColor,
       bgColor: userConfig.bgColor || this.defaultBgColor,
@@ -1111,21 +1113,24 @@ export class BaseModeEngine {
       saturation: userConfig.saturation ?? 0,
       invertChars: Boolean(userConfig.invertChars),
       ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     };
   }
 
-  getColorForPixel(r, g, b, lum, config) {
-    if (this.colorMode === 'monochrome') {
+  getColorForPixel(r, g, b, lum, config = {}) {
+    const mode = config.colorMode || this.colorMode;
+    if (mode === 'monochrome') {
       return hexToRgbVec3(config.monoColor || this.defaultMonoColor);
     }
-    if (this.colorMode === 'grayscale') {
+    if (mode === 'grayscale') {
       return [lum, lum, lum];
     }
     return [r / 255.0, g / 255.0, b / 255.0];
   }
 
-  getShaderModeInt() {
-    switch (this.colorMode) {
+  getShaderModeInt(config = {}) {
+    const mode = config.colorMode || this.colorMode;
+    switch (mode) {
       case 'monochrome': return 0;
       case 'grayscale':  return 1;
       case 'ansi16':     return 2;
@@ -1147,10 +1152,10 @@ export class ClassicModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: 'monochrome',
       monoColor: userConfig.monoColor || '#39ff52',
       bgColor: userConfig.bgColor || '#0a0a0c',
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1169,14 +1174,14 @@ export class MatrixModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: 'monochrome',
       monoColor: userConfig.monoColor || '#00ff66',
       bgColor: userConfig.bgColor || '#020b04',
       contrast: userConfig.contrast ?? 30,
       brightness: userConfig.brightness ?? 10,
       scanlines: userConfig.scanlines ?? true,
       enableEdgeDetection: userConfig.enableEdgeDetection ?? true,
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1192,9 +1197,9 @@ export class TrueColorModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: 'truecolor',
       bgColor: userConfig.bgColor || '#0a0a0c',
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1211,11 +1216,11 @@ export class BrailleModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: 'monochrome',
       monoColor: userConfig.monoColor || '#ffffff',
       bgColor: userConfig.bgColor || '#0a0a0c',
       contrast: userConfig.contrast ?? 20,
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1231,9 +1236,9 @@ export class BlocksModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: 'truecolor',
       bgColor: userConfig.bgColor || '#0a0a0c',
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1250,12 +1255,12 @@ export class Video2CharsModeEngine extends BaseModeEngine {
 
   prepareConfig(userConfig = {}) {
     return super.prepareConfig({
-      ...userConfig,
-      colorMode: userConfig.colorMode || 'truecolor',
       bgColor: userConfig.bgColor || '#ffffff',
       contrast: userConfig.contrast ?? 20,
       brightness: userConfig.brightness ?? 5,
       saturation: userConfig.saturation ?? 10,
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
     });
   }
 }
@@ -1280,8 +1285,8 @@ export class ModeEngineRegistry {
     if (!id) return this._engines.get('classic');
     const key = String(id).toLowerCase();
     if (this._engines.has(key)) return this._engines.get(key);
-    if (key === 'mono' || key === 'monochrome') return this._engines.get('classic');
-    if (key === 'rgb') return this._engines.get('truecolor');
+    if (key === 'mono' || key === 'monochrome' || key === 'grayscale') return this._engines.get('classic');
+    if (key === 'rgb' || key === 'truecolor' || key === 'ansi16' || key === 'ansi256') return this._engines.get('truecolor');
     return this._engines.get('classic');
   }
 
@@ -1545,7 +1550,24 @@ export class AsciliEngine {
       lumGrid[i] = (0.299*r + 0.587*g + 0.114*b) / 255.0;
       if (!isMono) {
         const p3 = i * 3;
-        colorGrid[p3] = r; colorGrid[p3+1] = g; colorGrid[p3+2] = b;
+        if (config.colorMode === 'grayscale') {
+          const lVal = Math.round(lumGrid[i] * 255);
+          colorGrid[p3]     = lVal;
+          colorGrid[p3 + 1] = lVal;
+          colorGrid[p3 + 2] = lVal;
+        } else if (config.colorMode === 'ansi16') {
+          colorGrid[p3]     = Math.round(Math.round(r / 127.5) * 127.5);
+          colorGrid[p3 + 1] = Math.round(Math.round(g / 127.5) * 127.5);
+          colorGrid[p3 + 2] = Math.round(Math.round(b / 127.5) * 127.5);
+        } else if (config.colorMode === 'ansi256') {
+          colorGrid[p3]     = Math.round(Math.round(r / 51) * 51);
+          colorGrid[p3 + 1] = Math.round(Math.round(g / 51) * 51);
+          colorGrid[p3 + 2] = Math.round(Math.round(b / 51) * 51);
+        } else {
+          colorGrid[p3]     = r;
+          colorGrid[p3 + 1] = g;
+          colorGrid[p3 + 2] = b;
+        }
       }
     }
 
@@ -1706,9 +1728,21 @@ export class AsciliEngine {
           let currRun   = '';
           for (let c = 0; c < cols; c++) {
             const p4 = (offset + c) * 4;
-            const red = imgData[p4], green = imgData[p4+1], blue = imgData[p4+2];
+            let red = imgData[p4], green = imgData[p4+1], blue = imgData[p4+2];
             const lum = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0;
             const ch = esc(charEngine.getCharForLuminance(lum, invert));
+            if (cfg.colorMode === 'grayscale') {
+              const gray = Math.round(lum * 255);
+              red = gray; green = gray; blue = gray;
+            } else if (cfg.colorMode === 'ansi16') {
+              red = Math.round(Math.round(red / 127.5) * 127.5);
+              green = Math.round(Math.round(green / 127.5) * 127.5);
+              blue = Math.round(Math.round(blue / 127.5) * 127.5);
+            } else if (cfg.colorMode === 'ansi256') {
+              red = Math.round(Math.round(red / 51) * 51);
+              green = Math.round(Math.round(green / 51) * 51);
+              blue = Math.round(Math.round(blue / 51) * 51);
+            }
             const colorKey = `${red},${green},${blue}`;
 
             if (colorKey === currColor) {
