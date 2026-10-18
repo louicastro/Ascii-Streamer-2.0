@@ -802,12 +802,13 @@ export class AsciliCanvas2DRenderer {
 
   render(cols, rows, charGrid, colorGrid, atlas, isMono, monoColorHex, fontSize = 10) {
     const { ctx, canvas } = this;
-    const charW = fontSize * 0.601;
-    const charH = fontSize;
+    const charW = canvas.width > 0 && cols > 0 ? (canvas.width / cols) : (fontSize * 0.601);
+    const charH = canvas.height > 0 && rows > 0 ? (canvas.height / rows) : fontSize;
+    const fontPx = Math.max(1, Math.floor(charH * 0.95));
 
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = `${fontSize}px "Courier New", monospace`;
+    ctx.font = `bold ${fontPx}px "Courier New", monospace`;
     ctx.textBaseline = 'top';
 
     const charMap = atlas.charMap;
@@ -818,9 +819,10 @@ export class AsciliCanvas2DRenderer {
         let line = '';
         const offset = r * cols;
         for (let c = 0; c < cols; c++) {
-          line += charMap[charGrid[offset + c]] || ' ';
+          const val = charGrid[offset + c];
+          line += typeof val === 'string' ? val : (charMap[val] || ' ');
         }
-        ctx.fillText(line, 0, r * charH);
+        ctx.fillText(line, 0, r * charH, canvas.width);
       }
     } else {
       for (let r = 0; r < rows; r++) {
@@ -835,14 +837,15 @@ export class AsciliCanvas2DRenderer {
           const cr  = colorGrid[p3];
           const cg  = colorGrid[p3 + 1];
           const cb  = colorGrid[p3 + 2];
-          const ch  = charMap[charGrid[idx]] || ' ';
+          const val = charGrid[idx];
+          const ch  = typeof val === 'string' ? val : (charMap[val] || ' ');
 
           if (cr === lastR && cg === lastG && cb === lastB) {
             run += ch;
           } else {
             if (run.length > 0) {
               ctx.fillStyle = `rgb(${lastR},${lastG},${lastB})`;
-              ctx.fillText(run, runStart * charW, r * charH);
+              ctx.fillText(run, runStart * charW, r * charH, run.length * charW);
             }
             run = ch;
             runStart = c;
@@ -853,7 +856,7 @@ export class AsciliCanvas2DRenderer {
         }
         if (run.length > 0) {
           ctx.fillStyle = `rgb(${lastR},${lastG},${lastB})`;
-          ctx.fillText(run, runStart * charW, r * charH);
+          ctx.fillText(run, runStart * charW, r * charH, run.length * charW);
         }
       }
     }
@@ -1047,7 +1050,7 @@ export class AsciliEngine {
           this._initFallbackRenderer(targetCanvas);
         }
         if (!rendered) {
-          if (!this._canvas2d) {
+          if (!this._canvas2d || this._canvas2d.canvas !== targetCanvas) {
             try { this._canvas2d = new AsciliCanvas2DRenderer(targetCanvas); } catch { this._canvas2d = null; }
           }
           if (this._canvas2d) {
@@ -1127,10 +1130,15 @@ export class AsciliEngine {
     const colorGrid = this._fallbackColors;
     const n = this._atlas.charCount;
 
+    const doAdj = config.brightness || config.contrast || config.gamma || config.saturation;
+
     const lumGrid = new Float32Array(cells);
     for (let i = 0; i < cells; i++) {
       const p4 = i * 4;
-      const r = imgData[p4], g = imgData[p4+1], b = imgData[p4+2];
+      let r = imgData[p4], g = imgData[p4+1], b = imgData[p4+2];
+      if (doAdj) {
+        [r, g, b] = adjustPixel(r, g, b, config.brightness || 0, config.contrast || 0, config.gamma || 0, config.saturation || 0);
+      }
       lumGrid[i] = (0.299*r + 0.587*g + 0.114*b) / 255.0;
       if (!isMono) {
         const p3 = i * 3;
@@ -1142,11 +1150,40 @@ export class AsciliEngine {
       applyDithering(lumGrid, cols, rows, n, config.dithering);
     }
 
-    for (let i = 0; i < cells; i++) {
-      let ci = (lumGrid[i] * (n - 1) + 0.5) | 0;
-      if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
-      if (config.invertChars) ci = (n - 1) - ci;
-      charGrid[i] = ci;
+    const enableEdge = config.enableEdgeDetection ?? true;
+    const edgeThreshold = config.edgeThreshold ?? 0.16;
+    const edgeThresholdSq = edgeThreshold * edgeThreshold;
+    const allowEdge = enableEdge && n >= 5 && rows > 2 && cols > 2;
+
+    for (let r = 0; r < rows; r++) {
+      const rOffset = r * cols;
+      for (let c = 0; c < cols; c++) {
+        const idx = rOffset + c;
+        let charToUse = null;
+
+        if (allowEdge && r > 0 && r < rows - 1 && c > 0 && c < cols - 1) {
+          const gx = (lumGrid[rOffset + (c + 1)] - lumGrid[rOffset + (c - 1)]) * 0.5;
+          const gy = (lumGrid[(r + 1) * cols + c] - lumGrid[(r - 1) * cols + c]) * 0.5;
+          const magSq = gx * gx + gy * gy;
+
+          if (magSq >= edgeThresholdSq) {
+            const absGx = Math.abs(gx);
+            const absGy = Math.abs(gy);
+            if (absGy > 1.8 * absGx) charToUse = '-';
+            else if (absGx > 1.8 * absGy) charToUse = '|';
+            else charToUse = (gx * gy > 0) ? '\\' : '/';
+          }
+        }
+
+        if (charToUse) {
+          charGrid[idx] = charToUse;
+        } else {
+          let ci = (lumGrid[idx] * (n - 1) + 0.5) | 0;
+          if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
+          if (config.invertChars) ci = (n - 1) - ci;
+          charGrid[idx] = ci;
+        }
+      }
     }
 
     if (config.temporalStability !== false) {
@@ -1156,14 +1193,19 @@ export class AsciliEngine {
       for (let i = 0; i < cells; i++) {
         const prev = this._prevCharGrid[i];
         const current = charGrid[i];
-        if (Math.abs(current - prev) <= 2) {
+        if (typeof current === 'number' && typeof prev === 'number' && Math.abs(current - prev) <= 2) {
           charGrid[i] = Math.round((current + prev) * 0.5);
         }
       }
       this._prevCharGrid.set(charGrid);
     }
 
-    this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || '#39ff52', config.fontSize || 10);
+    if (!this._canvas2d || this._canvas2d.canvas !== this._currentTarget) {
+      try { this._canvas2d = new AsciliCanvas2DRenderer(this._currentTarget); } catch { this._canvas2d = null; }
+    }
+    if (this._canvas2d) {
+      this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || '#39ff52', config.fontSize || 10);
+    }
   }
 
   async exportPlainTextAsync(onProgress) {

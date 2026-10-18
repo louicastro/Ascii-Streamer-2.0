@@ -1,5 +1,5 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
-import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR } from './exporter.js';
+import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
@@ -181,6 +181,7 @@ const cfg = {
 };
 
 const engine = new AsciliEngine();
+setSharedEngine(engine);
 if (typeof window !== 'undefined') {
   window.__ascili = { engine, state, cfg, AsciliVideoExporter, AsciliLiveRecorder, get cvExporter() { return cvExporter; } };
 }
@@ -1402,9 +1403,9 @@ const cvSave           = $('cvSave');
 const cvConvertAnother = $('cvConvertAnother');
 const cvDropZone       = $('cvDropZone');
 
-const cvExporter = new AsciliVideoExporter();
+const cvExporter = new AsciliVideoExporter(engine);
 const cvSrtExporter = new AsciliSrtExporter();
-const cvGifExporter = new AsciliGifVideoExporter();
+const cvGifExporter = new AsciliGifVideoExporter(engine);
 const SRT_MAX_COLS = 40;
 const SRT_DEFAULT_FPS = 15;
 const SRT_SIZE_BUDGET = 950 * 1024 * 1024;
@@ -1756,7 +1757,7 @@ function drawConverterPreview(videoEl, overrideCfg = null) {
     const charWFactor = (typeof CHAR_W_FACTOR === 'number' && CHAR_W_FACTOR > 0) ? CHAR_W_FACTOR : 0.601;
     const previewFontSize = Math.max(6, Math.min(12, Math.round(540 / (previewCols * charWFactor))));
     const previewCfg = { ...baseCfg, cols: previewCols, fontSize: previewFontSize };
-    renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize });
+    renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize }, engine);
   } catch (err) {
     console.warn('drawConverterPreview error:', err);
   }

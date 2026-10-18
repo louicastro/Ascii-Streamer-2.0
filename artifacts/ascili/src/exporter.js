@@ -58,207 +58,51 @@ export function computeFontForResolution(cols, videoW, videoH, resolution) {
 /** Force a dimension to an even number (required by H.264 encoders). */
 function makeEven(n) { return (n + 1) & ~1; }
 
+let _sharedEngine = null;
+
+export function getSharedEngine() {
+  if (!_sharedEngine) {
+    _sharedEngine = new AsciliEngine();
+  }
+  return _sharedEngine;
+}
+
+export function setSharedEngine(engine) {
+  _sharedEngine = engine;
+}
+
 /**
  * Render a single video frame as ASCII art onto `outputCanvas`.
- * Returns { rows, cols } (actual dimensions used).
+ * Delegates directly to AsciliEngine.renderFrame for 100% preview-export parity.
+ * Returns { rows, cols, rendered }.
  *
  * @param {HTMLVideoElement|HTMLCanvasElement} videoEl
  * @param {HTMLCanvasElement} outputCanvas
  * @param {object} cfg
  * @param {object} [overrides]  — optional { fontSize } to override cfg.fontSize
+ * @param {AsciliEngine} [engineInstance] — optional engine instance
  */
-export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides) {
-  const { colorMode='monochrome',
-          charSet=CHAR_SETS.standard, invertChars=false,
-          brightness=0, contrast=0, gamma=0, saturation=0 } = cfg;
-  const ansiLut = getAnsiColorLut(colorMode);
+export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides, engineInstance = null) {
+  const eng = engineInstance || getSharedEngine();
   const cols = Math.min(1000, Math.max(20, Math.round(cfg.cols || 80)));
+  const vw = videoEl.videoWidth || videoEl.width || 640;
+  const vh = videoEl.videoHeight || videoEl.height || 480;
+  const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+  const rows = cfg.rows ?? Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
 
   const fontSize = overrides?.fontSize ?? cfg.fontSize ?? 10;
+  const charW = fontSize * CHAR_W_FACTOR;
+  const targetW = outputCanvas.width > 0 ? outputCanvas.width : makeEven(Math.ceil(cols * charW));
+  const targetH = outputCanvas.height > 0 ? outputCanvas.height : makeEven(rows * fontSize);
 
-  const vw  = videoEl.videoWidth  || videoEl.width || 640;
-  const vh  = videoEl.videoHeight || videoEl.height || 480;
-  const crop = computeCropBox(vw, vh, cfg.aspectRatio);
-  const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
-
-  const charW  = fontSize * CHAR_W_FACTOR;
-  const charH  = fontSize;
-  // Ensure even dimensions for H.264 compatibility
-  const canvasW = makeEven(Math.ceil(cols * charW));
-  const canvasH = makeEven(rows * charH);
-
-  if (outputCanvas.width !== canvasW || outputCanvas.height !== canvasH) {
-    outputCanvas.width  = canvasW;
-    outputCanvas.height = canvasH;
+  if (outputCanvas.width !== targetW || outputCanvas.height !== targetH) {
+    outputCanvas.width = targetW;
+    outputCanvas.height = targetH;
   }
 
-  // Sample video into offscreen pixel grid
-  const { canvas: off, ctx: octx } = getOffscreen(cols, rows);
-  octx.save();
-  if (cfg.mirror) {
-    octx.translate(cols, 0);
-    octx.scale(-1, 1);
-  }
-  octx.drawImage(videoEl, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
-  octx.restore();
-  let data;
-  try { data = octx.getImageData(0, 0, cols, rows).data; }
-  catch { return { rows, cols }; }
-
-  const ctx    = outputCanvas.getContext('2d');
-  if (!ctx) return { rows, cols };
-  const chars  = charSet.split('');
-  const nChars = chars.length;
-  const doAdj  = brightness || contrast || gamma || saturation;
-  const isMono = colorMode === 'monochrome';
-  const enableEdgeDetection = cfg.enableEdgeDetection ?? true;
-  const edgeThreshold = cfg.edgeThreshold ?? 0.16;
-  const adaptiveContrast = cfg.adaptiveContrast ?? true;
-
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvasW, canvasH);
-  ctx.font         = `${fontSize}px 'Courier New',monospace`;
-  ctx.textBaseline = 'top';
-
-  // 1. Calculate luminance grid & adjust colors
-  const lumGrid = new Float32Array(rows * cols);
-  const rgbAdj  = new Uint8Array(rows * cols * 3);
-  let minLum = 1.0, maxLum = 0.0;
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const idx = r * cols + c;
-      const p4  = idx * 4;
-      let red   = data[p4];
-      let green = data[p4 + 1];
-      let blue  = data[p4 + 2];
-
-      if (doAdj) [red, green, blue] = adjustPixel(red, green, blue, brightness, contrast, gamma, saturation);
-
-      const p3 = idx * 3;
-      rgbAdj[p3]     = red;
-      rgbAdj[p3 + 1] = green;
-      rgbAdj[p3 + 2] = blue;
-
-      let lum = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0;
-      lumGrid[idx] = lum;
-      if (lum < minLum) minLum = lum;
-      if (lum > maxLum) maxLum = lum;
-    }
-  }
-
-  // Adaptive dynamic range
-  if (adaptiveContrast && maxLum - minLum > 0.08) {
-    const range = maxLum - minLum;
-    for (let i = 0; i < lumGrid.length; i++) {
-      lumGrid[i] = Math.min(1.0, Math.max(0.0, (lumGrid[i] - minLum) / range));
-    }
-  }
-
-  if (cfg.dithering && cfg.dithering !== 'none') {
-    applyDithering(lumGrid, cols, rows, nChars, cfg.dithering);
-  }
-
-  const edgeThresholdSq = edgeThreshold * edgeThreshold;
-  const allowEdgeGlyphs = enableEdgeDetection && nChars >= 5 && rows > 2 && cols > 2;
-
-  if (isMono) {
-    // Fastest path: build line string per row
-    ctx.fillStyle = cfg.monoColor || '#39ff52';
-    for (let r = 0; r < rows; r++) {
-      let line = '';
-      const rOffset = r * cols;
-      for (let c = 0; c < cols; c++) {
-        const idx = rOffset + c;
-        let charToUse = null;
-
-        if (allowEdgeGlyphs && r > 0 && r < rows - 1 && c > 0 && c < cols - 1) {
-          const gx = (lumGrid[rOffset + (c + 1)] - lumGrid[rOffset + (c - 1)]) * 0.5;
-          const gy = (lumGrid[(r + 1) * cols + c] - lumGrid[(r - 1) * cols + c]) * 0.5;
-          const magSq = gx * gx + gy * gy;
-
-          if (magSq >= edgeThresholdSq) {
-            const absGx = Math.abs(gx);
-            const absGy = Math.abs(gy);
-            if (absGy > 1.8 * absGx) charToUse = '-';
-            else if (absGx > 1.8 * absGy) charToUse = '|';
-            else charToUse = (gx * gy > 0) ? '\\' : '/';
-          }
-        }
-
-        if (!charToUse) {
-          const lum = lumGrid[idx];
-          let ci = 0;
-          if (nChars > 1) {
-            ci = Math.round(lum * (nChars - 1));
-            if (ci >= nChars) ci = nChars - 1;
-            if (ci < 0) ci = 0;
-            if (invertChars) ci = (nChars - 1) - ci;
-          }
-          charToUse = chars[ci] ?? ' ';
-        }
-
-        line += charToUse;
-      }
-      ctx.fillText(line, 0, r * charH);
-    }
-  } else {
-    // Color path
-    for (let r = 0; r < rows; r++) {
-      const rOffset = r * cols;
-      for (let c = 0; c < cols; c++) {
-        const idx = rOffset + c;
-        let charToUse = null;
-
-        if (allowEdgeGlyphs && r > 0 && r < rows - 1 && c > 0 && c < cols - 1) {
-          const gx = (lumGrid[rOffset + (c + 1)] - lumGrid[rOffset + (c - 1)]) * 0.5;
-          const gy = (lumGrid[(r + 1) * cols + c] - lumGrid[(r - 1) * cols + c]) * 0.5;
-          const magSq = gx * gx + gy * gy;
-
-          if (magSq >= edgeThresholdSq) {
-            const absGx = Math.abs(gx);
-            const absGy = Math.abs(gy);
-            if (absGy > 1.8 * absGx) charToUse = '-';
-            else if (absGx > 1.8 * absGy) charToUse = '|';
-            else charToUse = (gx * gy > 0) ? '\\' : '/';
-          }
-        }
-
-        if (!charToUse) {
-          const lum = lumGrid[idx];
-          let ci = 0;
-          if (nChars > 1) {
-            ci = Math.round(lum * (nChars - 1));
-            if (ci >= nChars) ci = nChars - 1;
-            if (ci < 0) ci = 0;
-            if (invertChars) ci = (nChars - 1) - ci;
-          }
-          charToUse = chars[ci] ?? ' ';
-        }
-
-        const p3 = idx * 3;
-        const red = rgbAdj[p3], green = rgbAdj[p3 + 1], blue = rgbAdj[p3 + 2];
-
-        if (colorMode === 'grayscale') {
-          const v = Math.round(lumGrid[idx] * 255);
-          ctx.fillStyle = `rgb(${v},${v},${v})`;
-        } else if (colorMode === 'truecolor') {
-          ctx.fillStyle = `rgb(${red},${green},${blue})`;
-        } else if (colorMode === 'ansi16') {
-          const lIdx = (((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)) * 3;
-          ctx.fillStyle = `rgb(${ansiLut[lIdx]},${ansiLut[lIdx+1]},${ansiLut[lIdx+2]})`;
-        } else if (colorMode === 'ansi256') {
-          const lIdx = (((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)) * 3;
-          ctx.fillStyle = `rgb(${ansiLut[lIdx]},${ansiLut[lIdx+1]},${ansiLut[lIdx+2]})`;
-        } else {
-          ctx.fillStyle = '#39ff52';
-        }
-        ctx.fillText(charToUse, c * charW, r * charH);
-      }
-    }
-  }
-
-  return { rows, cols };
+  const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
+  const res = eng.renderFrame(videoEl, outputCanvas, renderCfg);
+  return { rows, cols, rendered: Boolean(res?.rendered) };
 }
 
 // ─── AsciliVideoExporter ────────────────────────────────────────────────────
@@ -273,17 +117,17 @@ export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides) {
 //   exp.stop();  // cancel
 
 export class AsciliVideoExporter {
-  constructor() {
-    this._canvas   = document.createElement('canvas');
+  constructor(engine = null) {
+    this._canvas = document.createElement('canvas');
     this._frameCanvas = document.createElement('canvas');
-    this._engine   = new AsciliEngine();
+    this._engine = engine || getSharedEngine();
     this._recorder = null;
-    this._chunks   = [];
-    this._running  = false;
+    this._chunks = [];
+    this._running = false;
     this._startWall = 0;
-    this._mimeType  = '';
-    this._aborted   = false;
-    this._writable  = null;
+    this._mimeType = '';
+    this._aborted = false;
+    this._writable = null;
     this._writeChain = Promise.resolve();
     this._pendingWriteBytes = 0;
     this._writePauseBytes = 16 * 1024 * 1024;
@@ -308,17 +152,39 @@ export class AsciliVideoExporter {
    *   opts.onError(msg)                   – called on failure
    *   opts.targetFps                      – recording FPS (default 60)
    *   opts.resolution                     – 'auto', '720p', '1080p', '1440p'
+   *   opts.engine                         – shared AsciliEngine instance
    */
   start(videoEl, cfg, opts = {}) {
     const {
       onProgress, onComplete, onError, targetFps = 60, resolution = 'auto',
-      writable = null, maxBufferedBytes = Infinity,
+      writable = null, maxBufferedBytes = Infinity, engine = null,
     } = opts;
 
     if (this._running) {
       onError?.('A video export is already running. Stop it before starting another.');
       return;
     }
+
+    if (engine) {
+      this._engine = engine;
+    }
+
+    // Guard 1: Verify source video readiness
+    if (!videoEl || typeof videoEl.getBoundingClientRect !== 'function') {
+      onError?.('Invalid source video element.');
+      return;
+    }
+    const vw = videoEl.videoWidth || videoEl.width || 0;
+    const vh = videoEl.videoHeight || videoEl.height || 0;
+    if (vw <= 0 || vh <= 0) {
+      onError?.('Source video dimensions are not available (0x0). Please wait for the video to load before exporting.');
+      return;
+    }
+    if (videoEl.readyState < 2) {
+      onError?.('Source video is not ready for playback (readyState < 2). Please wait for the video to load.');
+      return;
+    }
+
     this._writable = writable;
     this._writeChain = Promise.resolve();
     this._pendingWriteBytes = 0;
@@ -354,8 +220,6 @@ export class AsciliVideoExporter {
     }) || 'video/webm';
 
     // Compute fontSize override for target resolution
-    const vw = videoEl.videoWidth || 640;
-    const vh = videoEl.videoHeight || 480;
     const crop = computeCropBox(vw, vh, cfg.aspectRatio);
     const resInfo = computeFontForResolution(cfg.cols || 80, vw, vh, resolution);
     const overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;
@@ -368,6 +232,12 @@ export class AsciliVideoExporter {
     const canvasW = resInfo?.outputW || frameW;
     const canvasH = resInfo?.outputH || frameH;
 
+    // Guard 2: Verify valid canvas dimensions
+    if (canvasW <= 0 || canvasH <= 0 || isNaN(canvasW) || isNaN(canvasH)) {
+      onError?.(`Invalid output canvas dimensions: ${canvasW}x${canvasH}.`);
+      return;
+    }
+
     if (canvasW > 16384 || canvasH > 16384 || canvasW * canvasH > 16_777_216) {
       this._writable?.abort().catch(() => {});
       this._writable = null;
@@ -379,57 +249,59 @@ export class AsciliVideoExporter {
       this._canvas.width  = canvasW;
       this._canvas.height = canvasH;
     }
-    if (this._frameCanvas.width !== frameW || this._frameCanvas.height !== frameH) {
-      this._frameCanvas.width = frameW;
-      this._frameCanvas.height = frameH;
-    }
 
     const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
-    let useGpuEngine = true;
-    let consecutiveGpuFailures = 0;
 
     const drawFrame = () => {
-      let frameRendered = false;
-      if (useGpuEngine) {
-        try {
-          const res = this._engine.renderFrame(videoEl, this._frameCanvas, renderCfg);
-          frameRendered = Boolean(res?.rendered);
-          if (frameRendered) {
-            consecutiveGpuFailures = 0;
-          } else {
-            consecutiveGpuFailures++;
-            if (consecutiveGpuFailures > 20) useGpuEngine = false;
-          }
-        } catch {
-          consecutiveGpuFailures++;
-          if (consecutiveGpuFailures > 20) useGpuEngine = false;
-        }
-      }
-      if (!frameRendered) {
-        renderFrameToCanvas(videoEl, this._frameCanvas, renderCfg, overrides);
+      let res = null;
+      try {
+        res = this._engine.renderFrame(videoEl, this._canvas, renderCfg);
+      } catch (err) {
+        console.warn('[AsciliVideoExporter] GPU frame render warning:', err);
       }
 
-      const outputCtx = this._canvas.getContext('2d');
-      if (!outputCtx) throw new Error('Could not create the video output canvas.');
-      outputCtx.fillStyle = '#000';
-      outputCtx.fillRect(0, 0, canvasW, canvasH);
-      const scale = Math.min(canvasW / this._frameCanvas.width, canvasH / this._frameCanvas.height);
-      const drawW = Math.round(this._frameCanvas.width * scale);
-      const drawH = Math.round(this._frameCanvas.height * scale);
-      outputCtx.drawImage(this._frameCanvas, (canvasW - drawW) / 2, (canvasH - drawH) / 2, drawW, drawH);
+      if (!res?.rendered) {
+        renderFrameToCanvas(videoEl, this._canvas, renderCfg, overrides, this._engine);
+      }
+
+      if (this._canvas.width <= 0 || this._canvas.height <= 0) {
+        throw new Error(`Export canvas has invalid dimensions: ${this._canvas.width}x${this._canvas.height}`);
+      }
     };
 
-    // Pre-render the first frame to initialize the canvas
+    // Guard 3: Pre-render first frame and verify non-empty buffer
     try {
       drawFrame();
     } catch (error) {
       this._writable?.abort().catch(() => {});
       this._writable = null;
-      onError?.(error.message);
+      onError?.('Initial frame render failed: ' + error.message);
       return;
     }
 
-    // Create stream at target FPS for stable encoder timestamps
+    try {
+      const ctx = this._canvas.getContext('2d');
+      if (ctx) {
+        const sampleW = Math.min(32, this._canvas.width);
+        const sampleH = Math.min(32, this._canvas.height);
+        const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
+        let hasPixels = false;
+        for (let i = 0; i < sampleData.length; i += 4) {
+          if (sampleData[i + 3] > 0 || sampleData[i] > 0 || sampleData[i + 1] > 0 || sampleData[i + 2] > 0) {
+            hasPixels = true;
+            break;
+          }
+        }
+        if (!hasPixels) {
+          this._writable?.abort().catch(() => {});
+          this._writable = null;
+          onError?.('Rendered frame canvas is empty (0 pixels). Check video source and graphics support.');
+          return;
+        }
+      }
+    } catch {}
+
+    // Guard 4: Create stream and verify video track
     let stream;
     try {
       stream = this._canvas.captureStream(targetFpsVal);
@@ -439,13 +311,19 @@ export class AsciliVideoExporter {
       } catch (e2) {
         this._writable?.abort().catch(() => {});
         this._writable = null;
-        onError?.('captureStream not supported: ' + (e2?.message || e.message));
+        onError?.('Canvas captureStream not supported: ' + (e2?.message || e.message));
         return;
       }
     }
 
-    const videoTrack = stream.getVideoTracks()[0];
-    const hasRequestFrame = typeof videoTrack?.requestFrame === 'function';
+    const videoTrack = stream?.getVideoTracks?.()[0];
+    if (!videoTrack) {
+      this._writable?.abort().catch(() => {});
+      this._writable = null;
+      onError?.('Could not capture video track from canvas stream.');
+      return;
+    }
+    const hasRequestFrame = typeof videoTrack.requestFrame === 'function';
 
     // Only attach audio if the source video has unmuted, active sound (muted tracks stall MediaRecorder)
     if (!videoEl.muted && videoEl.volume > 0) {
@@ -2040,7 +1918,8 @@ export class AsciliGifRecorder {
 // Converts an uploaded video into an animated GIF (.gif) file with ASCII styling.
 
 export class AsciliGifVideoExporter {
-  constructor() {
+  constructor(engine = null) {
+    this._engine = engine || getSharedEngine();
     this._running = false;
     this._encoder = null;
     this._frameCanvas = null;
@@ -2116,7 +1995,7 @@ export class AsciliGifVideoExporter {
           cols,
           rows,
           fontSize,
-        }, { fontSize });
+        }, { fontSize }, this._engine);
 
         this._encoder.addFrame(this._frameCanvas);
         framesCount++;
