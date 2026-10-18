@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>ASCILI — ASCII Video Engine</title>
   <link rel="icon" type="image/svg+xml" href="./public/favicon.svg" />
   <link rel="manifest" href="./manifest.webmanifest" />
@@ -16,19 +16,21 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="./src/style.css?v=2.2" />
-  <link rel="stylesheet" href="./src/website-upgrade.css?v=2.2" />
+  <link rel="stylesheet" href="./src/style.css?v=2.3" />
+  <link rel="stylesheet" href="./src/website-upgrade.css?v=2.3" />
 </head>
 <body>
 
   <!-- Top bar -->
   <header class="topbar" id="topbar">
-    <div class="logo">&gt;ASCILI_</div>
+    <div class="topbar-row-header">
+      <div class="logo">&gt;ASCILI_</div>
 
-    <!-- Mobile menu toggle -->
-    <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menu">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-    </button>
+      <!-- Mobile menu toggle -->
+      <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle Settings & Controls" title="Settings & Controls">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+    </div>
 
     <div class="preset-bar" id="presetBar">
       <span class="preset-label">PRESETS</span>
@@ -43,6 +45,16 @@
       <button class="source-btn" id="btnWebcam" data-testid="btn-webcam">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         Webcam
+      </button>
+      <button class="source-btn" id="btnFlipCamera" data-testid="btn-flip-camera" title="Flip Front/Rear Camera" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>
+          <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/>
+          <circle cx="12" cy="12" r="3"/>
+          <path d="m18 22-3-3 3-3"/>
+          <path d="m6 2 3 3-3 3"/>
+        </svg>
+        Flip
       </button>
       <button class="source-btn" id="btnScreen" data-testid="btn-screen">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -123,7 +135,7 @@
 
       <!-- Source preview PiP -->
       <div class="source-preview" id="sourcePreview">
-        <video id="sourceVideo" autoplay muted playsinline></video>
+        <video id="sourceVideo" autoplay muted playsinline webkit-playsinline></video>
         <div class="source-preview-label" id="sourceLabel">SOURCE</div>
         <div class="source-preview-handle">⠿</div>
       </div>
@@ -132,6 +144,15 @@
       <div class="output-controls">
         <button class="icon-btn rec-btn" id="btnRecord" data-testid="btn-record" title="Record ASCII (V)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+        </button>
+        <button class="icon-btn" id="btnFlipCameraCanvas" data-testid="btn-flip-camera-canvas" title="Flip Front/Rear Camera" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>
+            <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/>
+            <circle cx="12" cy="12" r="3"/>
+            <path d="m18 22-3-3 3-3"/>
+            <path d="m6 2 3 3-3 3"/>
+          </svg>
         </button>
         <button class="icon-btn" id="btnPause" data-testid="btn-pause" title="Pause (Space)">
           <svg id="iconPause" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
@@ -175,13 +196,22 @@
       </div>
     </div>
 
+    <!-- Settings backdrop for mobile -->
+    <div class="settings-backdrop" id="settingsBackdrop"></div>
+
     <!-- Settings panel -->
-    <aside class="settings-panel" id="settingsPanel">
+    <aside class="settings-panel collapsed" id="settingsPanel">
+      <div class="settings-sheet-handle"></div>
       <div class="settings-header">
         <span class="settings-title">SYSTEM.CFG</span>
-        <button class="icon-btn" id="btnResetSettings" data-testid="btn-reset-settings" title="Reset Settings (R)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        </button>
+        <div class="settings-header-actions">
+          <button class="icon-btn" id="btnResetSettings" data-testid="btn-reset-settings" title="Reset Settings (R)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+          <button class="icon-btn" id="btnCloseSettings" aria-label="Close Settings" title="Close Settings">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
       </div>
 
       <div class="settings-body">
@@ -418,6 +448,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="./src/app.js?v=2.2"></script>
+  <script type="module" src="./src/app.js?v=2.3"></script>
 </body>
 </html>

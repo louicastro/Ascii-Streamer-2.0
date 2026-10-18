@@ -195,7 +195,7 @@ export class AsciliVideoExporter {
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick best supported MIME type
-    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
+    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '') && !/Android/i.test(navigator.userAgent || '');
     const candidates = isLinux ? [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp9',
@@ -215,9 +215,10 @@ export class AsciliVideoExporter {
       'video/webm;codecs=vp8',
       'video/webm',
     ];
+    const defaultMime = (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('video/mp4')) ? 'video/mp4' : 'video/webm';
     this._mimeType = candidates.find(t => {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
-    }) || 'video/webm';
+    }) || defaultMime;
 
     // Compute fontSize override for target resolution
     const crop = computeCropBox(vw, vh, cfg.aspectRatio);
@@ -1601,7 +1602,7 @@ export class AsciliLiveRecorder {
     const targetFpsVal = Math.min(120, Math.max(1, parseFloat(targetFps) || 60));
 
     // Pick MIME
-    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '');
+    const isLinux = typeof navigator !== 'undefined' && /Linux|X11/i.test(navigator.userAgent || '') && !/Android/i.test(navigator.userAgent || '');
     const candidates = isLinux ? [
       'video/webm;codecs=vp9,opus',
       'video/webm;codecs=vp9',
@@ -1621,9 +1622,10 @@ export class AsciliLiveRecorder {
       'video/webm;codecs=vp8',
       'video/webm',
     ];
+    const defaultMime = (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('video/mp4')) ? 'video/mp4' : 'video/webm';
     this._mimeType = candidates.find(t => {
       try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
-    }) || 'video/webm';
+    }) || defaultMime;
 
     const resInfo = computeFontForResolution(cfg.cols || 80, videoWidth, videoHeight, resolution);
     this._overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;

@@ -122,22 +122,24 @@ body {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .topbar {
-    flex-wrap: wrap;
-    min-height: 76px;
+    display: flex;
+    flex-direction: column;
+    min-height: unset;
     height: auto;
-    padding: 8px 10px;
-  }
-
-  .preset-bar {
-    order: 3;
-    width: 100%;
-    padding-top: 4px;
+    padding: 6px 10px;
+    gap: 6px;
   }
 
   .source-bar {
-    margin-left: auto;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .preset-bar {
+    width: 100%;
+    padding-top: 2px;
   }
 
   .waiting-text {

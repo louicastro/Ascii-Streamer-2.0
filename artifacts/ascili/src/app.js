@@ -37,6 +37,8 @@ const checkAdaptiveContrast  = $('checkAdaptiveContrast');
 
 // Controls
 const btnWebcam     = $('btnWebcam');
+const btnFlipCamera = $('btnFlipCamera');
+const btnFlipCameraCanvas = $('btnFlipCameraCanvas');
 const btnScreen     = $('btnScreen');
 const btnFile       = $('btnFile');
 const fileInput     = $('fileInput');
@@ -47,6 +49,8 @@ const btnFullscreen = $('btnFullscreen');
 const btnCopyAscii  = $('btnCopyAscii');
 const btnMirror     = $('btnMirror');
 const btnSettings   = $('btnSettings');
+const btnCloseSettings = $('btnCloseSettings');
+const settingsBackdrop = $('settingsBackdrop');
 const btnScanlines  = $('btnScanlines');
 const btnResetSettings = $('btnResetSettings');
 const btnCopy       = $('btnCopy');
@@ -134,6 +138,7 @@ const presetBtns = document.querySelectorAll('.preset-btn');
 
 const state = {
   sourceType:    'none',   // 'webcam' | 'screen' | 'file' | 'none'
+  facingMode:    'user',   // 'user' (front) | 'environment' (rear)
   currentFile:   null,     // uploaded File object for seamless export
   currentObjectUrl: null,
   sourceLoadToken: 0,
@@ -457,7 +462,7 @@ if (checkScanlines) {
 
 if (mobileMenuBtn) {
   mobileMenuBtn.addEventListener('click', () => {
-    presetBar.classList.toggle('mobile-visible');
+    toggleSettings();
   });
 }
 
@@ -842,6 +847,8 @@ function stopCurrentSource() {
   engine.reset();
 
   document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+  if (btnFlipCamera) btnFlipCamera.style.display = 'none';
+  if (btnFlipCameraCanvas) btnFlipCameraCanvas.style.display = 'none';
   if (statFps) statFps.textContent = '00';
   if (statLatency) statLatency.textContent = '000';
   if (statChars) statChars.textContent = '0';
@@ -854,14 +861,45 @@ function attachStream(stream, type) {
   state.sourceType  = type;
   state.currentFile = null;
   sourceVideo.srcObject = stream;
-  sourceVideo.play().then(() => {
-    waitingOverlay.classList.add('hidden');
-    sourcePreview.classList.add('visible');
-    sourceLabel.textContent = type.toUpperCase();
-    startRenderLoop();
-  }).catch(err => {
-    showToast('ERROR: ' + err.message);
-  });
+  sourceVideo.muted = true;
+  sourceVideo.defaultMuted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.setAttribute('playsinline', '');
+  sourceVideo.setAttribute('webkit-playsinline', '');
+
+  const startPlayback = () => {
+    sourceVideo.play().then(() => {
+      waitingOverlay.classList.add('hidden');
+      sourcePreview.classList.add('visible');
+      sourceLabel.textContent = type.toUpperCase();
+      startRenderLoop();
+    }).catch(err => {
+      console.warn('[ASCILI] Autoplay prevented, waiting for touch/click:', err);
+      waitingOverlay.classList.remove('hidden');
+      showToast('Tap the screen to start video playback');
+      const resumeOnTouch = () => {
+        sourceVideo.play().then(() => {
+          waitingOverlay.classList.add('hidden');
+          sourcePreview.classList.add('visible');
+          sourceLabel.textContent = type.toUpperCase();
+          startRenderLoop();
+        }).catch(() => {});
+        window.removeEventListener('touchstart', resumeOnTouch);
+        window.removeEventListener('click', resumeOnTouch);
+      };
+      window.addEventListener('touchstart', resumeOnTouch, { once: true });
+      window.addEventListener('click', resumeOnTouch, { once: true });
+    });
+  };
+
+  if (sourceVideo.readyState >= 1) {
+    startPlayback();
+  } else {
+    sourceVideo.onloadedmetadata = () => {
+      sourceVideo.onloadedmetadata = null;
+      startPlayback();
+    };
+  }
 }
 
 const VIDEO_FILE_EXTENSIONS = /\.(?:3gp|avi|m4v|mkv|mov|mp4|mpeg|mpg|ogv|ogg|webm)$/i;
@@ -891,6 +929,10 @@ function attachFile(file) {
   state.currentObjectUrl = url;
   sourceVideo.loop  = true;
   sourceVideo.muted = true;
+  sourceVideo.defaultMuted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.setAttribute('playsinline', '');
+  sourceVideo.setAttribute('webkit-playsinline', '');
   sourceVideo.controls = false;
   sourceVideo.src = url;
 
@@ -950,6 +992,43 @@ function attachFile(file) {
   });
 }
 
+// ─── Source Preview Touch & Drag (Mobile) ───────────────────────────────────
+
+if (sourcePreview) {
+  let pipTouchStartX = 0, pipTouchStartY = 0;
+  let pipStartX = 0, pipStartY = 0;
+  sourcePreview.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const rect = sourcePreview.getBoundingClientRect();
+    pipTouchStartX = touch.clientX;
+    pipTouchStartY = touch.clientY;
+    pipStartX = rect.left;
+    pipStartY = rect.top;
+  }, { passive: true });
+
+  sourcePreview.addEventListener('touchmove', e => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - pipTouchStartX;
+    const dy = touch.clientY - pipTouchStartY;
+    const containerRect = asciiContainer.getBoundingClientRect();
+    const pipWidth = sourcePreview.offsetWidth;
+    const pipHeight = sourcePreview.offsetHeight;
+
+    let newLeft = pipStartX + dx - containerRect.left;
+    let newTop = pipStartY + dy - containerRect.top;
+
+    newLeft = Math.max(4, Math.min(containerRect.width - pipWidth - 4, newLeft));
+    newTop = Math.max(4, Math.min(containerRect.height - pipHeight - 4, newTop));
+
+    sourcePreview.style.left = `${newLeft}px`;
+    sourcePreview.style.top = `${newTop}px`;
+    sourcePreview.style.right = 'auto';
+    sourcePreview.style.bottom = 'auto';
+  }, { passive: true });
+}
+
 // ─── Drag & Drop ─────────────────────────────────────────────────────────────
 
 let dragCounter = 0;
@@ -997,19 +1076,63 @@ document.addEventListener('drop', e => e.preventDefault());
 
 // ─── Source Buttons ───────────────────────────────────────────────────────────
 
-btnWebcam.addEventListener('click', async () => {
-  if (state.sourceType === 'webcam') { stopCurrentSource(); return; }
+async function startWebcam(facingMode = state.facingMode || 'user') {
+  state.facingMode = facingMode;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    if (state.stream) {
+      state.stream.getTracks().forEach(t => t.stop());
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: state.facingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+    } catch (idealErr) {
+      console.warn('[ASCILI] Ideal camera constraints failed, trying basic video:', idealErr);
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+
     attachStream(stream, 'webcam');
     btnWebcam.classList.add('active');
+    if (btnFlipCamera) btnFlipCamera.style.display = 'inline-flex';
+    if (btnFlipCameraCanvas) btnFlipCameraCanvas.style.display = 'inline-flex';
+    showToast(`Camera active (${state.facingMode === 'user' ? 'Front' : 'Rear'})`);
   } catch (err) {
-    showToast('Webcam denied: ' + err.message);
+    if (err.name === 'NotAllowedError') {
+      showToast('Camera access denied. Please allow camera permissions in browser settings.');
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      showToast('No camera found on this device.');
+    } else {
+      showToast('Camera error: ' + err.message);
+    }
   }
+}
+
+async function flipCamera() {
+  if (state.sourceType !== 'webcam') return;
+  const nextMode = state.facingMode === 'user' ? 'environment' : 'user';
+  await startWebcam(nextMode);
+}
+
+btnWebcam.addEventListener('click', async () => {
+  if (state.sourceType === 'webcam') { stopCurrentSource(); return; }
+  await startWebcam(state.facingMode || 'user');
 });
+
+if (btnFlipCamera) btnFlipCamera.addEventListener('click', flipCamera);
+if (btnFlipCameraCanvas) btnFlipCameraCanvas.addEventListener('click', flipCamera);
 
 btnScreen.addEventListener('click', async () => {
   if (state.sourceType === 'screen') { stopCurrentSource(); return; }
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getDisplayMedia !== 'function') {
+    showToast('Screen sharing is not supported on this mobile browser. Use Webcam or File.');
+    return;
+  }
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     attachStream(stream, 'screen');
@@ -1081,11 +1204,20 @@ function toggleFullscreen() {
 
 // ─── Settings Panel ───────────────────────────────────────────────────────────
 
-btnSettings.addEventListener('click', toggleSettings);
+function toggleSettings(forceState) {
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const isCurrentlyCollapsed = settingsPanel.classList.contains('collapsed');
+  const shouldCollapse = typeof forceState === 'boolean' ? !forceState : !isCurrentlyCollapsed;
 
-function toggleSettings() {
-  settingsPanel.classList.toggle('collapsed');
+  settingsPanel.classList.toggle('collapsed', shouldCollapse);
+  if (settingsBackdrop) {
+    settingsBackdrop.classList.toggle('active', isMobile && !shouldCollapse);
+  }
 }
+
+btnSettings.addEventListener('click', () => toggleSettings());
+if (btnCloseSettings) btnCloseSettings.addEventListener('click', () => toggleSettings(false));
+if (settingsBackdrop) settingsBackdrop.addEventListener('click', () => toggleSettings(false));
 
 // ─── Reset Settings ───────────────────────────────────────────────────────────
 
@@ -2380,12 +2512,20 @@ document.addEventListener('keydown', e => {
 applyPreset('classic');
 readConfig();
 
+if (typeof window !== 'undefined') {
+  if (window.innerWidth <= 768) {
+    settingsPanel.classList.add('collapsed');
+  } else {
+    settingsPanel.classList.remove('collapsed');
+  }
+}
+
 // ─── PWA Service Worker Registration & Cache Purging ──────────────────────────
 
 if (typeof window !== 'undefined' && 'caches' in window) {
   caches.keys().then(keys => {
     keys.forEach(k => {
-      if (k !== 'ascili-cache-v2') {
+      if (k !== 'ascili-cache-v3') {
         caches.delete(k);
       }
     });

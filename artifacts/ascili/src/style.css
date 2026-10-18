@@ -24,6 +24,7 @@
 
 html, body {
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -34,7 +35,16 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+  min-height: 100%;
+  min-height: 100dvh;
   user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.topbar-row-header {
+  display: contents;
 }
 
 /* ─── TOP BAR ──────────────────────────────────────────────── */
@@ -384,6 +394,41 @@ body {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-sheet-handle {
+  display: none;
+  width: 40px;
+  height: 4px;
+  background: var(--border-bright);
+  border-radius: 2px;
+  margin: 8px auto 4px;
+  flex-shrink: 0;
+}
+
+.settings-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 95;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.settings-backdrop.active {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .settings-title {
@@ -1558,33 +1603,60 @@ kbd {
   .topbar {
     flex-direction: column;
     height: auto;
-    padding: 8px 10px;
+    padding: 6px 10px;
     align-items: stretch;
-    gap: 8px;
+    gap: 6px;
     overflow: visible;
   }
+  .topbar-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+  .logo {
+    width: auto;
+    font-size: 14px;
+  }
   .mobile-menu-btn {
-    display: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    background: rgba(57, 255, 82, 0.08);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    color: var(--green);
   }
   .preset-bar {
     overflow-x: auto;
-    padding-bottom: 2px;
+    padding: 2px 0 4px;
     min-width: 0;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
   .preset-bar::-webkit-scrollbar {
     display: none;
   }
+  .preset-btn {
+    font-size: 10px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
   .source-bar {
     display: flex;
     justify-content: space-between;
-    gap: 6px;
+    gap: 5px;
     width: 100%;
+    margin-left: 0;
   }
   .source-bar .source-btn,
   .source-bar .dl-wrap {
     flex: 1;
     min-width: 0;
+    font-size: 10px;
+    padding: 6px 6px;
   }
   .source-bar .dl-wrap .dl-main-btn {
     width: 100%;
@@ -1593,7 +1665,10 @@ kbd {
   .dl-menu {
     right: 0;
     left: auto;
-    min-width: 190px;
+    min-width: 200px;
+  }
+  .settings-sheet-handle {
+    display: block;
   }
   .settings-panel {
     position: fixed;
@@ -1601,20 +1676,55 @@ kbd {
     left: 0;
     right: 0;
     width: 100% !important;
-    height: 50vh;
+    height: 74vh;
+    height: 74dvh;
+    max-height: 85vh;
+    max-height: 85dvh;
     border-left: none;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--border-bright);
+    border-radius: 14px 14px 0 0;
     transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
     z-index: 100;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.85);
   }
-  .settings-panel:not(.collapsed) { transform: translateY(0); }
+  .settings-panel:not(.collapsed) {
+    transform: translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .settings-panel.collapsed {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .settings-body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .output-controls {
+    top: 6px;
+    right: 6px;
+    gap: 5px;
+  }
+  .output-controls .icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+  .source-preview {
+    width: 100px;
+    max-width: 28vw;
+    bottom: 6px;
+    right: 6px;
+    border-width: 1px;
+  }
   .stats-bar {
     gap: 8px;
     font-size: 8px;
     justify-content: space-between;
   }
   .stat:nth-child(n+3) { display: none; }
-  .settings-title { font-size: 12px; }
+  .settings-title { font-size: 11px; }
   .section-label { font-size: 10px; }
 }
 

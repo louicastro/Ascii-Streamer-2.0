@@ -1,5 +1,5 @@
 // ASCILI Offline Service Worker
-const CACHE_NAME = 'ascili-cache-v2';
+const CACHE_NAME = 'ascili-cache-v3';
 
 const STATIC_ASSETS = [
   './',
