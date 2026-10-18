@@ -1,5 +1,5 @@
 // ASCILI Offline Service Worker
-const CACHE_NAME = 'ascili-cache-v1';
+const CACHE_NAME = 'ascili-cache-v2';
 
 const STATIC_ASSETS = [
   './',
@@ -39,7 +39,23 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Stale-while-revalidate for local origin assets
+  // Network-first for HTML pages and script modules to avoid serving stale builds
+  if (req.mode === 'navigate' || req.destination === 'document' || req.destination === 'script' || req.url.endsWith('.html') || req.url.endsWith('.js')) {
+    event.respondWith(
+      fetch(req)
+        .then(networkResponse => {
+          if (networkResponse && networkResponse.status === 200) {
+            const resClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(req, resClone));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for static assets like fonts and images
   event.respondWith(
     caches.match(req).then(cached => {
       const fetchPromise = fetch(req).then(networkResponse => {

@@ -2379,12 +2379,23 @@ document.addEventListener('keydown', e => {
 applyPreset('classic');
 readConfig();
 
-// ─── PWA Service Worker Registration ──────────────────────────────────────────
+// ─── PWA Service Worker Registration & Cache Purging ──────────────────────────
+
+if (typeof window !== 'undefined' && 'caches' in window) {
+  caches.keys().then(keys => {
+    keys.forEach(k => {
+      if (k !== 'ascili-cache-v2') {
+        caches.delete(k);
+      }
+    });
+  }).catch(() => {});
+}
 
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js')
       .then(reg => {
+        reg.update();
         console.log('[ASCILI] Service worker active, scope:', reg.scope);
       })
       .catch(err => {
