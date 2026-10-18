@@ -82,7 +82,11 @@
           </button>
           <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
             <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
-            <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
+            <span id="dlRecordLabel">Record Rendered Video (1080p MP4)</span>  <span class="dl-ext" id="dlRecordExt">1080p MP4</span>
+          </button>
+          <button class="dl-item dl-item-record" id="dlRecordVideo720" data-testid="dl-record-video-720">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+            <span>Record 720p Video (Lightweight)</span>  <span class="dl-ext">720p MP4</span>
           </button>
           <button class="dl-item dl-item-record" id="dlRecordGif" data-testid="dl-record-gif">
             <svg id="dlGifIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
@@ -418,7 +422,26 @@
         </details>
 
         <div class="settings-section">
-          <div class="section-label">EXPORT</div>
+          <div class="section-label">EXPORT & RECORDING</div>
+          <div class="setting-row">
+            <label class="setting-label" for="selectRecordFormat">Video Codec</label>
+            <select class="setting-select" id="selectRecordFormat" data-testid="select-record-format">
+              <option value="mp4-h264" selected>MP4 (H.264 / AVC)</option>
+              <option value="mp4-h265">MP4 (H.265 / HEVC)</option>
+              <option value="webm-vp9">WebM (VP9)</option>
+              <option value="auto">Auto (Best for Device)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label class="setting-label" for="selectRecordRes">Resolution</label>
+            <select class="setting-select" id="selectRecordRes" data-testid="select-record-res">
+              <option value="1080p" selected>1080p (Full HD)</option>
+              <option value="720p">720p (HD - Fast)</option>
+              <option value="auto">Auto (Source Size)</option>
+              <option value="1440p">1440p (2K)</option>
+              <option value="4k">4K (2160p)</option>
+            </select>
+          </div>
           <div class="setting-row">
             <button class="source-btn" id="btnOpenExportModal" data-testid="btn-open-export" style="width: 100%; justify-content: center; padding: 10px 12px; font-weight: bold; background: var(--bg-hover); border: 1px solid var(--accent); color: var(--accent); cursor: pointer; border-radius: 4px;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>

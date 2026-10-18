@@ -94,14 +94,18 @@ const dlPng         = $('dlPng');
 const dlCopyFrame   = $('dlCopyFrame');
 const dlRecordGif   = $('dlRecordGif');
 const dlGifLabel    = $('dlGifLabel');
-const dlRecordVideo = $('dlRecordVideo');
-const dlRecordLabel = $('dlRecordLabel');
-const dlVideo       = $('dlVideo');
+const dlRecordVideo    = $('dlRecordVideo');
+const dlRecordLabel    = $('dlRecordLabel');
+const dlRecordVideo720 = $('dlRecordVideo720');
+const dlRecordExt      = $('dlRecordExt');
+const dlVideo          = $('dlVideo');
 
 // Settings inputs
-const selectColorMode   = $('selectColorMode');
-const selectCharSet     = $('selectCharSet');
-const selectBgColor     = $('selectBgColor');
+const selectColorMode    = $('selectColorMode');
+const selectCharSet      = $('selectCharSet');
+const selectBgColor      = $('selectBgColor');
+const selectRecordFormat = $('selectRecordFormat');
+const selectRecordRes    = $('selectRecordRes');
 const customCharRow     = $('customCharRow');
 const rowCustomCharset  = $('rowCustomCharset');
 const inputCustomCharset = $('inputCustomCharset');
@@ -568,22 +572,24 @@ let recTimerInterval = null;
 let liveTemporaryExport = null;
 
 function fmtRecTime(s) {
-  const m = Math.floor(s / 60);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const sec = Math.floor(s % 60);
+  if (h > 0) {
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
   return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 
-async function startLiveRecording() {
+async function startLiveRecording(options = {}) {
   if (!state.running) { showToast('Start a video source first'); return; }
   if (liveRecorder.running) { stopLiveRecording(); return; }
 
   readConfig();
-  const format = cvCfgFormat ? cvCfgFormat.value : 'mp4-h264';
+  const format = options.format || selectRecordFormat?.value || cvCfgFormat?.value || 'mp4-h264';
+  const targetResolution = options.resolution || selectRecordRes?.value || cvCfgRes?.value || '1080p';
   const mimeType = detectMime(format);
   const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-  const recordExtension = dlRecordVideo?.querySelector('.dl-ext');
-  if (recordExtension) recordExtension.textContent = `.${extension}`;
-  const targetResolution = cvCfgRes?.value || '1080p';
   const codecTag = format.includes('h265') ? 'h265'
                  : format.includes('h264') ? 'h264'
                  : format.includes('vp9') ? 'vp9'
@@ -613,12 +619,12 @@ async function startLiveRecording() {
     videoWidth:  sourceVideo.videoWidth  || 640,
     videoHeight: sourceVideo.videoHeight || 480,
     writable,
-    onComplete(blob, mimeType, result) {
+    onComplete(blob, resultMime, result) {
       if (temporaryExport) {
         temporaryExport.prepareDownload().then(() => {
           liveTemporaryExport = temporaryExport;
           updateRecUI(false);
-          showToast('Recording ready; choose Download Recorded Video to save it');
+          showToast('Recording ready; click Download Recorded Video to save');
         }).catch(error => {
           temporaryExport.discard();
           showToast('Could not prepare the recording download: ' + error.message);
@@ -628,7 +634,7 @@ async function startLiveRecording() {
         showToast('Recording saved to the selected file');
         updateRecUI(false);
       } else if (blob) {
-        download(filename, blob, mimeType);
+        download(filename, blob, resultMime || mimeType);
         showToast('Recording saved — ' + fmtBytes(blob.size));
         updateRecUI(false);
       }
@@ -644,11 +650,12 @@ async function startLiveRecording() {
   if (!liveRecorder.running) return;
   updateRecUI(true);
   const resLabel = targetResolution.toUpperCase();
+  const codecName = codecTag.toUpperCase();
   showToast(temporaryExport
-    ? `Recording limitless ${resLabel} video; click Stop & Download when done`
+    ? `Recording ${resLabel} (${codecName}) video; click Stop & Download when done`
     : writable
-    ? `Recording limitless ${resLabel} video to selected file`
-    : `Recording limitless ${resLabel} video`);
+    ? `Recording ${resLabel} (${codecName}) to selected file`
+    : `Recording ${resLabel} (${codecName}) video`);
 }
 
 function stopLiveRecording() {
@@ -659,12 +666,19 @@ function updateRecUI(isRecording) {
   btnRecord.classList.toggle('recording', isRecording);
   recIndicator.classList.toggle('visible', isRecording);
 
+  const res = selectRecordRes?.value || cvCfgRes?.value || '1080p';
+  const fmt = selectRecordFormat?.value || cvCfgFormat?.value || 'mp4-h264';
+  const ext = fmt.includes('webm') ? 'WebM' : (fmt.includes('h265') ? 'H.265' : 'H.264');
+  if (dlRecordExt) {
+    dlRecordExt.textContent = `${res} ${ext}`;
+  }
+
   if (dlRecordVideo) {
     dlRecordVideo.classList.toggle('recording', isRecording);
     if (dlRecordLabel) {
       dlRecordLabel.textContent = isRecording
         ? 'Stop & Download Video'
-        : liveTemporaryExport ? 'Download Recorded Video' : 'Record Rendered Video';
+        : liveTemporaryExport ? 'Download Recorded Video' : `Record Rendered Video (${res} ${ext})`;
     }
   }
 
@@ -679,7 +693,7 @@ function updateRecUI(isRecording) {
   }
 }
 
-async function handleLiveRecordAction() {
+async function handleLiveRecordAction(opts = {}) {
   if (liveTemporaryExport) {
     try {
       liveTemporaryExport.download();
@@ -694,7 +708,7 @@ async function handleLiveRecordAction() {
   if (liveRecorder.running) {
     stopLiveRecording();
   } else {
-    await startLiveRecording();
+    await startLiveRecording(opts);
   }
 }
 
@@ -1579,9 +1593,43 @@ if (dlRecordVideo) {
   dlRecordVideo.addEventListener('click', () => {
     dlMenu.classList.remove('open');
     btnDownload.classList.remove('open');
-    handleLiveRecordAction();
+    const res = selectRecordRes?.value || '1080p';
+    const fmt = selectRecordFormat?.value || 'mp4-h264';
+    handleLiveRecordAction({ resolution: res, format: fmt });
   });
 }
+if (dlRecordVideo720) {
+  dlRecordVideo720.addEventListener('click', () => {
+    dlMenu.classList.remove('open');
+    btnDownload.classList.remove('open');
+    const fmt = selectRecordFormat?.value || 'mp4-h264';
+    handleLiveRecordAction({ resolution: '720p', format: fmt });
+  });
+}
+
+if (selectRecordFormat && cvCfgFormat) {
+  selectRecordFormat.addEventListener('change', () => {
+    cvCfgFormat.value = selectRecordFormat.value;
+    updateCodecBadge();
+    updateRecUI(liveRecorder.running);
+  });
+  cvCfgFormat.addEventListener('change', () => {
+    selectRecordFormat.value = cvCfgFormat.value;
+    updateRecUI(liveRecorder.running);
+  });
+}
+
+if (selectRecordRes && cvCfgRes) {
+  selectRecordRes.addEventListener('change', () => {
+    cvCfgRes.value = selectRecordRes.value;
+    updateRecUI(liveRecorder.running);
+  });
+  cvCfgRes.addEventListener('change', () => {
+    selectRecordRes.value = cvCfgRes.value;
+    updateRecUI(liveRecorder.running);
+  });
+}
+
 dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 btnOpenExportModal?.addEventListener('click', () => { openConverter(); });
 
@@ -1916,7 +1964,23 @@ async function chooseVideoFile(mimeType, suggestedName) {
   }
 }
 
+async function cleanupStaleTempFiles() {
+  if (navigator.storage?.getDirectory) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      if (typeof root.values === 'function') {
+        for await (const entry of root.values()) {
+          if (entry.name && entry.name.startsWith('.ascili-')) {
+            root.removeEntry(entry.name).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+  }
+}
+
 async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes = 0) {
+  // Tier 1: OPFS native stream directly to disk without RAM usage
   if (navigator.storage?.getDirectory) {
     try {
       const root = await navigator.storage.getDirectory();
@@ -1950,12 +2014,79 @@ async function createTemporaryExportFile(suggestedName, mimeType, expectedBytes 
           if (!downloadStarted) return cleanup();
         },
       };
-    } catch {
-      // Fallback
-    }
+    } catch {}
   }
 
-  // Resilient fallback: streaming chunk store
+  // Tier 2: IndexedDB disk-backed chunk store (guarantees solid 30-min recording without RAM exhaustion)
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const dbName = `ascili_export_${Date.now()}`;
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(dbName, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('chunks', { autoIncrement: true });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      let closed = false;
+      let assembledBlob = null;
+      let downloadStarted = false;
+
+      const cleanupDb = () => {
+        try {
+          db.close();
+          indexedDB.deleteDatabase(dbName);
+        } catch {}
+      };
+
+      return {
+        writable: {
+          write: chunk => new Promise((resolve, reject) => {
+            try {
+              const tx = db.transaction('chunks', 'readwrite');
+              tx.objectStore('chunks').add(chunk);
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
+            } catch (err) {
+              reject(err);
+            }
+          }),
+          close: () => {
+            closed = true;
+            return Promise.resolve();
+          },
+          abort: () => {
+            cleanupDb();
+            return Promise.resolve();
+          },
+        },
+        async prepareDownload() {
+          if (!closed) throw new Error('Export is not ready yet.');
+          assembledBlob = await new Promise((resolve, reject) => {
+            const tx = db.transaction('chunks', 'readonly');
+            const req = tx.objectStore('chunks').getAll();
+            req.onsuccess = () => {
+              const allChunks = req.result || [];
+              resolve(new Blob(allChunks, { type: mimeType }));
+            };
+            req.onerror = () => reject(req.error);
+          });
+        },
+        download() {
+          if (!assembledBlob) throw new Error('Export is not ready to download.');
+          download(suggestedName, assembledBlob, mimeType);
+          downloadStarted = true;
+          window.setTimeout(cleanupDb, 60 * 60 * 1000);
+        },
+        cleanup: cleanupDb,
+        discard() {
+          if (!downloadStarted) cleanupDb();
+        },
+      };
+    } catch {}
+  }
+
+  // Tier 3 fallback: in-memory streaming chunk store
   const chunks = [];
   let closed = false;
   let finalBlob = null;
@@ -2197,6 +2328,8 @@ function cvShowExportError(message) {
 }
 
 function openConverter() {
+  if (selectRecordFormat && cvCfgFormat) cvCfgFormat.value = selectRecordFormat.value;
+  if (selectRecordRes && cvCfgRes) cvCfgRes.value = selectRecordRes.value;
   cvResetUI();
   cvRefreshSettings();
   try {
@@ -2788,6 +2921,8 @@ document.addEventListener('keydown', e => {
 
 applyPreset('classic');
 readConfig();
+updateRecUI(false);
+cleanupStaleTempFiles();
 
 if (typeof window !== 'undefined') {
   if (window.innerWidth <= 768) {

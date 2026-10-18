@@ -63,6 +63,23 @@ export function computeFontForResolution(cols, videoW, videoH, resolution) {
 /**
  * Returns prioritized MIME candidates based on format selection and audio availability.
  */
+export function calculateVideoBitrate(width, height, fps = 60, isHevc = false) {
+  const pixels = (width || 1280) * (height || 720);
+  let baseBps;
+  if (pixels >= 3840 * 2160) {
+    baseBps = 22_000_000; // 4K
+  } else if (pixels >= 2560 * 1440) {
+    baseBps = 14_000_000; // 1440p
+  } else if (pixels >= 1920 * 1080) {
+    baseBps = fps > 30 ? 10_000_000 : 7_500_000; // 1080p
+  } else if (pixels >= 1280 * 720) {
+    baseBps = fps > 30 ? 5_000_000 : 3_800_000; // 720p
+  } else {
+    baseBps = 2_500_000; // SD / 480p
+  }
+  return isHevc ? Math.round(baseBps * 0.7) : baseBps;
+}
+
 export function getCandidateMimeTypes(format = 'auto', hasAudio = true) {
   const audioSuffix = hasAudio ? ',mp4a.40.2' : '';
   const opusSuffix = hasAudio ? ',opus' : '';
@@ -71,21 +88,31 @@ export function getCandidateMimeTypes(format = 'auto', hasAudio = true) {
     `video/mp4;codecs=hevc${audioSuffix}`,
     `video/mp4;codecs=hvc1${audioSuffix}`,
     `video/mp4;codecs=hev1${audioSuffix}`,
+    `video/mp4;codecs=hvc1.1.6.L120.B0${audioSuffix}`,
+    `video/mp4;codecs=hvc1.1.6.L123.B0${audioSuffix}`,
     `video/mp4;codecs=hvc1.1.6.L93.B0${audioSuffix}`,
+    `video/mp4;codecs=hev1.1.6.L120.B0${audioSuffix}`,
     `video/mp4;codecs=hev1.1.6.L93.B0${audioSuffix}`,
     'video/mp4;codecs=hevc',
     'video/mp4;codecs=hvc1',
     'video/mp4;codecs=hev1',
+    'video/mp4;codecs=hvc1.1.6.L120.B0',
+    'video/mp4;codecs=hvc1.1.6.L123.B0',
     'video/mp4;codecs=hvc1.1.6.L93.B0',
+    'video/mp4;codecs=hev1.1.6.L120.B0',
     'video/mp4;codecs=hev1.1.6.L93.B0',
   ];
 
   const avcList = [
     `video/mp4;codecs=avc1.640028${audioSuffix}`, // High Profile (ideal for 1080p)
-    `video/mp4;codecs=avc1.4D401F${audioSuffix}`, // Main Profile
+    `video/mp4;codecs=avc1.64002a${audioSuffix}`, // High Profile Level 4.2 (1080p60)
+    `video/mp4;codecs=avc1.4d002a${audioSuffix}`, // Main Profile Level 4.2 (1080p)
+    `video/mp4;codecs=avc1.4D401F${audioSuffix}`, // Main Profile Level 3.1 (720p)
     `video/mp4;codecs=avc1.42E01E${audioSuffix}`, // Baseline
     `video/mp4;codecs=avc1${audioSuffix}`,
     'video/mp4;codecs=avc1.640028',
+    'video/mp4;codecs=avc1.64002a',
+    'video/mp4;codecs=avc1.4d002a',
     'video/mp4;codecs=avc1.4D401F',
     'video/mp4;codecs=avc1.42E01E',
     'video/mp4;codecs=avc1',
@@ -394,13 +421,9 @@ export class AsciliVideoExporter {
       }
     } catch {}
 
-    // Use higher bitrate for higher resolutions (1080p, 1440p, 4K)
-    const maxDim = Math.max(this._canvas.width, this._canvas.height);
-    const bitsPerSecond = maxDim >= 3600 ? 25_000_000
-                        : maxDim >= 2400 ? 16_000_000
-                        : maxDim >= 1800 ? 12_000_000
-                        : maxDim >= 1200 ? 6_000_000
-                        : 4_000_000;
+    // Use resolution and codec-tailored bitrate (e.g. 1080p, 720p, H.265/H.264)
+    const isHevc = format.includes('h265') || format.includes('hevc');
+    const bitsPerSecond = calculateVideoBitrate(this._canvas.width, this._canvas.height, targetFpsVal, isHevc);
 
     let recorder = null;
     const hasAudio = stream.getAudioTracks().length > 0;
@@ -462,7 +485,6 @@ export class AsciliVideoExporter {
     this._recorder.ondataavailable = e => {
       if (!e.data || e.data.size === 0) return;
       this._bufferedBytes += e.data.size;
-      this._chunks.push(e.data);
       if (this._writable) {
         const chunk = e.data;
         this._pendingWriteBytes += chunk.size;
@@ -479,7 +501,9 @@ export class AsciliVideoExporter {
             this._recorder.resume();
           }
         });
+        return;
       }
+      this._chunks.push(e.data);
     };
 
     this._recorder.onpause = () => videoEl.pause();
@@ -1702,12 +1726,13 @@ export class AsciliLiveRecorder {
       }
     } catch {}
 
-    const maxDim = Math.max(this._canvas.width || 0, this._canvas.height || 0, asciiCanvas?.width || 0, asciiCanvas?.height || 0, 1920);
-    const bitsPerSecond = maxDim >= 3600 ? 25_000_000
-                        : maxDim >= 2400 ? 16_000_000
-                        : maxDim >= 1800 ? 12_000_000
-                        : maxDim >= 1200 ? 6_000_000
-                        : 4_000_000;
+    const isHevc = format.includes('h265') || format.includes('hevc');
+    const bitsPerSecond = calculateVideoBitrate(
+      this._canvas.width || asciiCanvas?.width || 1920,
+      this._canvas.height || asciiCanvas?.height || 1080,
+      targetFpsVal,
+      isHevc
+    );
 
     this._chunks = [];
     this._running = true;
@@ -1865,6 +1890,8 @@ export class AsciliLiveRecorder {
       const scale = Math.min(this._canvas.width / asciiCanvas.width, this._canvas.height / asciiCanvas.height);
       const dw = Math.round(asciiCanvas.width * scale);
       const dh = Math.round(asciiCanvas.height * scale);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(asciiCanvas, (this._canvas.width - dw) / 2, (this._canvas.height - dh) / 2, dw, dh);
     } else {
       renderFrameToCanvas(videoEl, this._canvas, cfg, this._overrides);
