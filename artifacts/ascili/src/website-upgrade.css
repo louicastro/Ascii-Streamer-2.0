@@ -229,3 +229,324 @@ body {
   border-color: var(--cyan) !important;
   color: var(--cyan) !important;
 }
+
+/* ─── GROUPED EXPORT DROPDOWN LABELS ─── */
+.dl-group-label {
+  padding: 8px 12px 4px;
+  font-size: 8.5px;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: var(--cyan);
+  text-transform: uppercase;
+  background: rgba(0, 245, 255, 0.05);
+  border-bottom: 1px solid rgba(0, 245, 255, 0.1);
+  border-top: 1px solid rgba(0, 245, 255, 0.1);
+  user-select: none;
+  pointer-events: none;
+}
+.dl-group-label:first-child {
+  border-top: none;
+}
+
+/* ─── QUICK-START CREATIVE HERO OVERLAY ─── */
+.waiting-hero {
+  max-width: 680px;
+  width: 92%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 28px 20px;
+  animation: heroFadeIn 0.3s ease-out;
+}
+
+@keyframes heroFadeIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.waiting-badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(57, 255, 82, 0.07);
+  border: 1px solid rgba(57, 255, 82, 0.25);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.waiting-tagline {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.waiting-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  margin: 0;
+  text-shadow: 0 0 24px rgba(57, 255, 82, 0.45);
+}
+
+.waiting-subtitle {
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  max-width: 520px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.waiting-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.waiting-action-card {
+  background: rgba(14, 22, 16, 0.85);
+  border: 1px solid rgba(57, 255, 82, 0.22);
+  border-radius: 8px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-family: inherit;
+  color: inherit;
+}
+
+.waiting-action-card:hover {
+  border-color: var(--green);
+  background: rgba(57, 255, 82, 0.1);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(57, 255, 82, 0.16);
+}
+
+.waiting-action-card:active {
+  transform: translateY(-1px);
+}
+
+.action-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(57, 255, 82, 0.12);
+  color: var(--green);
+  border: 1px solid rgba(57, 255, 82, 0.3);
+  transition: all 0.2s ease;
+}
+
+.waiting-action-card:hover .action-card-icon {
+  transform: scale(1.08);
+  background: var(--green);
+  color: #0c1016;
+  border-color: var(--green);
+  box-shadow: 0 0 16px rgba(57, 255, 82, 0.6);
+}
+
+.action-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.action-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.03em;
+}
+
+.action-card-desc {
+  font-size: 10px;
+  color: var(--fg-dim);
+  line-height: 1.35;
+}
+
+.waiting-presets-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.preview-heading {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--cyan);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.preview-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.preview-pill {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.preview-pill:hover {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(57, 255, 82, 0.08);
+  transform: translateY(-1px);
+}
+
+/* ─── COLLAPSIBLE SETTINGS DETAILS ─── */
+.settings-details {
+  margin: 12px 0 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.settings-details[open] {
+  border-color: rgba(57, 255, 82, 0.3);
+}
+
+.settings-summary {
+  padding: 9px 12px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--fg-dim);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-summary:hover {
+  background: rgba(57, 255, 82, 0.06);
+  color: var(--green);
+}
+
+.summary-toggle-icon {
+  font-size: 9px;
+  color: var(--fg-dim);
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.settings-details[open] .summary-toggle-icon {
+  transform: rotate(180deg);
+  color: var(--green);
+}
+
+.settings-details-body {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── HARDWARE CODEC BADGE ─── */
+.cv-codec-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: rgba(57, 255, 82, 0.12);
+  border: 1px solid rgba(57, 255, 82, 0.35);
+  color: var(--green);
+}
+
+/* ─── MOBILE RESPONSIVENESS ENHANCEMENTS ─── */
+.preset-bar {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.preset-bar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .waiting-hero {
+    width: 95%;
+    padding: 18px 12px;
+    gap: 12px;
+  }
+
+  .waiting-title {
+    font-size: 18px;
+  }
+
+  .waiting-subtitle {
+    font-size: 11px;
+  }
+
+  .waiting-action-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .waiting-action-card {
+    flex-direction: row;
+    text-align: left;
+    padding: 10px 12px;
+    gap: 12px;
+  }
+
+  .action-card-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+  }
+
+  .source-btn,
+  .icon-btn {
+    min-height: 40px;
+    min-width: 40px;
+  }
+
+  .source-preview {
+    width: 110px;
+    height: 70px;
+    bottom: 38px;
+    right: 10px;
+    opacity: 0.9;
+  }
+}

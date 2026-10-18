@@ -75,18 +75,31 @@
           <svg class="dl-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="dl-menu" id="dlMenu">
-          <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video" style="border-bottom: 1px solid var(--border-subtle); margin-bottom: 4px; padding-bottom: 6px; font-weight: bold;">
+          <div class="dl-group-label">VIDEO & ANIMATION</div>
+          <button class="dl-item dl-item-video" id="dlVideo" data-testid="dl-video">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
             Full Video & Subtitles Export…  <span class="dl-ext">(C)</span>
           </button>
-          <button class="dl-item" id="dlTxt" data-testid="dl-txt">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            Plain Text  <span class="dl-ext">.txt</span>
+          <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
+            <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
+            <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
+          </button>
+          <button class="dl-item dl-item-record" id="dlRecordGif" data-testid="dl-record-gif">
+            <svg id="dlGifIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <span id="dlGifLabel">Record Animated GIF</span>  <span class="dl-ext">.gif</span>
+          </button>
+
+          <div class="dl-group-label">WEB & PLAYERS</div>
+          <button class="dl-item" id="dlVideo2Chars" data-testid="dl-video2chars">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12V8.5A2.5 2.5 0 0 1 5.5 6H8l2 2h6.5A2.5 2.5 0 0 1 19 10.5v7A2.5 2.5 0 0 1 16.5 20H5.5A2.5 2.5 0 0 1 3 17.5V12Z"/><path d="M9 12h6M9 15h5"/></svg>
+            Video2Chars HTML Player  <span class="dl-ext">.html</span>
           </button>
           <button class="dl-item" id="dlHtml" data-testid="dl-html">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
             Styled HTML  <span class="dl-ext">.html</span>
           </button>
+
+          <div class="dl-group-label">TEXT & SNAPSHOTS</div>
           <button class="dl-item" id="dlPng" data-testid="dl-png">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
             Screenshot  <span class="dl-ext">.png</span>
@@ -95,13 +108,9 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             Copy ASCII Frame  <span class="dl-ext">text</span>
           </button>
-          <button class="dl-item dl-item-record" id="dlRecordGif" data-testid="dl-record-gif">
-            <svg id="dlGifIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-            <span id="dlGifLabel">Record Animated GIF</span>  <span class="dl-ext">.gif</span>
-          </button>
-          <button class="dl-item dl-item-record" id="dlRecordVideo" data-testid="dl-record-video">
-            <svg id="dlRecordIcon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="7"/></svg>
-            <span id="dlRecordLabel">Record Rendered Video</span>  <span class="dl-ext">.mp4</span>
+          <button class="dl-item" id="dlTxt" data-testid="dl-txt">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Plain Text  <span class="dl-ext">.txt</span>
           </button>
         </div>
       </div>
@@ -119,13 +128,57 @@
       <!-- Scanlines overlay (optional CRT effect) -->
       <div class="scanlines" id="scanlines"></div>
 
+      <!-- Quick-Start Creative Hero -->
       <div class="waiting-overlay" id="waitingOverlay">
-        <div class="waiting-dots">
-          <span></span><span></span><span></span>
+        <div class="waiting-hero">
+          <div class="waiting-badge-row">
+            <span class="waiting-badge">V2.4</span>
+            <span class="waiting-tagline">REAL-TIME ASCII & ANSI VIDEO SYNTHESIZER</span>
+          </div>
+          <h1 class="waiting-title">Convert Webcam, Screen, or Video into ASCII Art</h1>
+          <p class="waiting-subtitle">Hardware-accelerated WebGL engine running at up to 120 FPS. Select a source to begin:</p>
+
+          <div class="waiting-action-grid">
+            <button class="waiting-action-card" id="heroWebcamBtn" type="button">
+              <div class="action-card-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              </div>
+              <div class="action-card-text">
+                <div class="action-card-title">Live Webcam</div>
+                <div class="action-card-desc">Real-time camera feed with CRT phosphor glow</div>
+              </div>
+            </button>
+            <button class="waiting-action-card" id="heroScreenBtn" type="button">
+              <div class="action-card-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              </div>
+              <div class="action-card-text">
+                <div class="action-card-title">Capture Screen</div>
+                <div class="action-card-desc">Stream any application window, game, or tab</div>
+              </div>
+            </button>
+            <button class="waiting-action-card" id="heroFileBtn" type="button">
+              <div class="action-card-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div class="action-card-text">
+                <div class="action-card-title">Upload Video</div>
+                <div class="action-card-desc">Process and export MP4, WebM, MOV, or MKV</div>
+              </div>
+            </button>
+          </div>
+
+          <div class="waiting-presets-preview">
+            <span class="preview-heading">POPULAR PRESETS:</span>
+            <div class="preview-pills">
+              <button class="preview-pill" data-preset="classic" type="button">🟢 Classic Green</button>
+              <button class="preview-pill" data-preset="matrix" type="button">🟩 Matrix Rain</button>
+              <button class="preview-pill" data-preset="video2chars" type="button">📄 Video2Chars Paper</button>
+              <button class="preview-pill" data-preset="truecolor" type="button">🌈 TrueColor RGB</button>
+              <button class="preview-pill" data-preset="braille" type="button">⠿ Braille Dots</button>
+            </div>
+          </div>
         </div>
-        <div class="waiting-text">READY FOR VIDEO SIGNAL</div>
-        <div class="waiting-hint">Choose webcam, screen, or file to begin your live ASCII stream.</div>
-        <div class="waiting-callout"><span class="waiting-badge">LIVE</span> Webcam • Screen • File</div>
       </div>
 
       <!-- Drag & drop overlay -->
@@ -218,7 +271,16 @@
       <div class="settings-body">
 
         <div class="settings-section">
-          <div class="section-label">RENDER MODE</div>
+          <div class="section-label">PRIMARY RENDER MODE</div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="selectQualityMode">Quality Profile</label>
+            <select class="setting-select" id="selectQualityMode" data-testid="select-quality-mode">
+              <option value="balanced" selected>Balanced (80 cols · 60 FPS)</option>
+              <option value="fast">Fast (50 cols · Performance)</option>
+              <option value="ultra">Ultra (120 cols · High Density)</option>
+            </select>
+          </div>
 
           <div class="setting-row">
             <label class="setting-label">Color Mode</label>
@@ -252,12 +314,12 @@
           <div class="setting-row">
             <label class="setting-label">Character Set</label>
             <select class="setting-select" id="selectCharSet" data-testid="select-charset">
-              <option value="standard">Standard</option>
-              <option value="extended">Extended</option>
+              <option value="standard">Standard (10 Chars)</option>
+              <option value="extended">Extended (70 Chars)</option>
               <option value="video2chars">Video2Chars (83 Chars)</option>
-              <option value="block">Block</option>
-              <option value="minimal">Minimal</option>
-              <option value="braille">Braille</option>
+              <option value="block">Block Shading</option>
+              <option value="minimal">Minimal (5 Chars)</option>
+              <option value="braille">Braille Patterns</option>
               <option value="custom">Custom…</option>
             </select>
           </div>
@@ -276,79 +338,89 @@
             <label class="setting-label" for="inputCustomCharset">Custom Glyphs <span class="setting-value" id="valCustomChars">10 chars</span></label>
             <input class="setting-text" id="inputCustomCharset" type="text" value=" .:-=+*#%@" placeholder="Dark to bright characters..." />
           </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="selectDithering">Dithering</label>
-            <select class="setting-select" id="selectDithering" data-testid="select-dithering">
-              <option value="none">None (Standard)</option>
-              <option value="bayer">Bayer 4×4 Ordered</option>
-              <option value="floyd">Floyd-Steinberg</option>
-              <option value="atkinson">Atkinson (MacPaint)</option>
-            </select>
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="selectAspectRatio">Aspect Ratio</label>
-            <select class="setting-select" id="selectAspectRatio" data-testid="select-aspect-ratio">
-              <option value="auto">Original (Auto)</option>
-              <option value="16:9">16:9 Widescreen</option>
-              <option value="9:16">9:16 Shorts / Reels</option>
-              <option value="1:1">1:1 Square</option>
-              <option value="4:3">4:3 Classic TV</option>
-            </select>
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="chkMirror">Mirror Feed</label>
-            <input type="checkbox" id="chkMirror" class="setting-checkbox" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="rangeCols">Output Width <span class="setting-value"><span id="valCols">80</span> cols</span></label>
-            <input class="setting-range" id="rangeCols" type="range" min="20" max="1000" step="10" value="80" aria-label="Output width in columns" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="rangeFontSize">Font Size <span class="setting-value"><span id="valFontSize">10</span> px</span></label>
-            <input class="setting-range" id="rangeFontSize" type="range" min="1" max="30" step="1" value="10" aria-label="Font size in pixels" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label" for="selectFps">Frame Rate</label>
-            <select class="setting-select" id="selectFps" data-testid="select-fps" aria-label="Target render frame rate">
-              <option value="15">15 FPS</option>
-              <option value="24">24 FPS</option>
-              <option value="29.5">29.5 FPS</option>
-              <option value="30">30 FPS</option>
-              <option value="60" selected>60 FPS</option>
-            </select>
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label">Brightness</label>
-            <input class="setting-range" id="inputBrightness" type="range" min="0" max="200" value="100" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label">Contrast</label>
-            <input class="setting-range" id="inputContrast" type="range" min="0" max="200" value="100" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label">Gamma</label>
-            <input class="setting-range" id="inputGamma" type="range" min="40" max="220" value="100" />
-          </div>
-
-          <div class="setting-row">
-            <label class="setting-label">Edge Detection</label>
-            <input class="setting-range" id="inputEdge" type="range" min="0" max="100" value="45" />
-          </div>
         </div>
+
+        <!-- Collapsible Fine-Tuning & CRT Effects -->
+        <details class="settings-details" id="settingsDetails">
+          <summary class="settings-summary">
+            <span>FINE-TUNING &amp; EFFECTS</span>
+            <span class="summary-toggle-icon">▾</span>
+          </summary>
+
+          <div class="settings-details-content">
+            <div class="setting-row">
+              <label class="setting-label" for="rangeCols">Output Width <span class="setting-value"><span id="valCols">80</span> cols</span></label>
+              <input class="setting-range" id="rangeCols" type="range" min="20" max="1000" step="10" value="80" aria-label="Output width in columns" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="rangeFontSize">Font Size <span class="setting-value"><span id="valFontSize">10</span> px</span></label>
+              <input class="setting-range" id="rangeFontSize" type="range" min="1" max="30" step="1" value="10" aria-label="Font size in pixels" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="selectFps">Frame Rate</label>
+              <select class="setting-select" id="selectFps" data-testid="select-fps" aria-label="Target render frame rate">
+                <option value="15">15 FPS</option>
+                <option value="24">24 FPS</option>
+                <option value="29.5">29.5 FPS</option>
+                <option value="30">30 FPS</option>
+                <option value="60" selected>60 FPS</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="selectDithering">Dithering</label>
+              <select class="setting-select" id="selectDithering" data-testid="select-dithering">
+                <option value="none">None (Standard)</option>
+                <option value="bayer">Bayer 4×4 Ordered</option>
+                <option value="floyd">Floyd-Steinberg</option>
+                <option value="atkinson">Atkinson (MacPaint)</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="selectAspectRatio">Aspect Ratio</label>
+              <select class="setting-select" id="selectAspectRatio" data-testid="select-aspect-ratio">
+                <option value="auto">Original (Auto)</option>
+                <option value="16:9">16:9 Widescreen</option>
+                <option value="9:16">9:16 Shorts / Reels</option>
+                <option value="1:1">1:1 Square</option>
+                <option value="4:3">4:3 Classic TV</option>
+              </select>
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label" for="chkMirror">Mirror Feed</label>
+              <input type="checkbox" id="chkMirror" class="setting-checkbox" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label">Brightness</label>
+              <input class="setting-range" id="inputBrightness" type="range" min="0" max="200" value="100" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label">Contrast</label>
+              <input class="setting-range" id="inputContrast" type="range" min="0" max="200" value="100" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label">Gamma</label>
+              <input class="setting-range" id="inputGamma" type="range" min="40" max="220" value="100" />
+            </div>
+
+            <div class="setting-row">
+              <label class="setting-label">Edge Detection</label>
+              <input class="setting-range" id="inputEdge" type="range" min="0" max="100" value="45" />
+            </div>
+          </div>
+        </details>
 
         <div class="settings-section">
           <div class="section-label">EXPORT</div>
           <div class="setting-row">
-            <button class="source-btn" id="btnOpenExportModal" data-testid="btn-open-export" style="width: 100%; justify-content: center; padding: 9px 12px; font-weight: bold; background: var(--bg-hover); border: 1px solid var(--accent); color: var(--accent); cursor: pointer; border-radius: 4px;">
+            <button class="source-btn" id="btnOpenExportModal" data-testid="btn-open-export" style="width: 100%; justify-content: center; padding: 10px 12px; font-weight: bold; background: var(--bg-hover); border: 1px solid var(--accent); color: var(--accent); cursor: pointer; border-radius: 4px;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
               OPEN EXPORT WORKSTATION (C)
             </button>
@@ -358,6 +430,18 @@
       </div>
     </aside>
   </main>
+
+  <!-- Live telemetry status bar -->
+  <footer class="stats-bar" id="statsBar">
+    <div class="stat"><span class="stat-label">FPS</span><span class="stat-val" id="statFps">00</span></div>
+    <div class="stat"><span class="stat-label">LATENCY</span><span class="stat-val" id="statLatency">000</span><span class="stat-unit">ms</span></div>
+    <div class="stat"><span class="stat-label">CHARS</span><span class="stat-val" id="statChars">0</span></div>
+    <div class="stat"><span class="stat-label">GRID</span><span class="stat-val" id="statDims">0x0</span></div>
+    <div class="stat-right">
+      <span class="stat-badge" id="statMode">MONOCHROME</span>
+      <span class="stat-badge" id="statSource">NONE</span>
+    </div>
+  </footer>
 
   <div class="cv-overlay" id="cvOverlay" aria-hidden="true">
     <section class="cv-panel" role="dialog" aria-modal="true" aria-labelledby="cvTitle">
@@ -385,6 +469,7 @@
             <div class="cv-stat-row"><span>Character set</span><span class="cv-val" id="cvCfgChars">Standard</span></div>
             <div class="cv-stat-row"><span>Output width</span><span class="cv-val" id="cvCfgCols">80 cols</span></div>
             <div class="cv-stat-row"><span>Font size</span><span class="cv-val" id="cvCfgFont">10px</span></div>
+            <div class="cv-stat-row"><span>Codec Support</span><span class="cv-val cv-codec-pill" id="cvCodecBadge">Detecting...</span></div>
             <label class="cv-stat-row" for="cvCfgFormat" id="rowVideoFormat"><span>Video format</span>
               <select class="setting-select cv-select" id="cvCfgFormat" aria-label="Video export format and codec">
                 <option value="mp4-h264" selected>MP4 (H.264 / AVC)</option>
@@ -415,14 +500,18 @@
             </label>
             <label class="cv-stat-row" for="cvExportType"><span>Export type</span>
               <select class="setting-select cv-select" id="cvExportType">
-                <option value="video" selected>Rendered video (.mp4 / .webm)</option>
-                <option value="html">Standalone HTML Player (.html) - Video2Chars Web</option>
-                <option value="gif">Animated GIF (.gif)</option>
-                <option value="ytt">YouTube Timed Text (.ytt) - 80/100 cols (Color & 24 FPS, max 20MB)</option>
-                <option value="youtube">YouTube Captions (.vtt)</option>
-                <option value="srt">Subtitles (.srt)</option>
-                <option value="vtt">WebVTT (.vtt)</option>
-                <option value="ass">Advanced SubStation Alpha (.ass)</option>
+                <optgroup label="🎬 Video & Interactive">
+                  <option value="video" selected>Rendered video (.mp4 / .webm)</option>
+                  <option value="html">Standalone HTML Player (.html) - Video2Chars Web</option>
+                  <option value="gif">Animated GIF (.gif)</option>
+                </optgroup>
+                <optgroup label="📝 Captions & Subtitles">
+                  <option value="ytt">YouTube Timed Text (.ytt) - 80/100 cols (Color & 24 FPS, max 20MB)</option>
+                  <option value="youtube">YouTube Captions (.vtt)</option>
+                  <option value="srt">Subtitles (.srt)</option>
+                  <option value="vtt">WebVTT (.vtt)</option>
+                  <option value="ass">Advanced SubStation Alpha (.ass)</option>
+                </optgroup>
               </select>
             </label>
           </div>

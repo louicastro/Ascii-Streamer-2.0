@@ -89,6 +89,7 @@ const btnDownload   = $('btnDownload');
 const dlMenu        = $('dlMenu');
 const dlTxt         = $('dlTxt');
 const dlHtml        = $('dlHtml');
+const dlVideo2Chars = $('dlVideo2Chars');
 const dlPng         = $('dlPng');
 const dlCopyFrame   = $('dlCopyFrame');
 const dlRecordGif   = $('dlRecordGif');
@@ -110,6 +111,7 @@ const selectAspectRatio = $('selectAspectRatio');
 const chkMirror         = $('chkMirror');
 const inputCustomChars  = $('inputCustomChars');
 const checkInvert       = $('checkInvert');
+const selectQualityMode = $('selectQualityMode');
 const rangeCols         = $('rangeCols') || $('inputCols');
 const valCols           = $('valCols');
 const rangeFontSize     = $('rangeFontSize');
@@ -364,6 +366,9 @@ function applyPreset(name) {
   if (rangeFontSize) rangeFontSize.value = presetFontSize;
   if (valFontSize) valFontSize.textContent = presetFontSize;
   if (selectFps) selectFps.value = String(p.fps);
+  if (selectQualityMode) {
+    selectQualityMode.value = presetCols <= 50 ? 'fast' : (presetCols >= 110 ? 'ultra' : 'balanced');
+  }
   if (rangeBrightness) rangeBrightness.value = p.brightness + (legacyCenteredSliders ? 100 : 0);
   if (valBrightness) valBrightness.textContent = p.brightness;
   if (rangeContrast) rangeContrast.value = p.contrast + (legacyCenteredSliders ? 100 : 0);
@@ -1170,6 +1175,33 @@ fileInput.addEventListener('change', () => {
   fileInput.value = '';
 });
 
+// Hero Quick-Start Buttons & Preview Pills
+const heroWebcamBtn = $('heroWebcamBtn');
+const heroScreenBtn = $('heroScreenBtn');
+const heroFileBtn   = $('heroFileBtn');
+
+heroWebcamBtn?.addEventListener('click', async () => {
+  if (state.sourceType === 'webcam') { stopCurrentSource(); return; }
+  await startWebcam(state.facingMode || 'user');
+});
+
+heroScreenBtn?.addEventListener('click', () => {
+  btnScreen.click();
+});
+
+heroFileBtn?.addEventListener('click', () => {
+  fileInput.click();
+});
+
+document.querySelectorAll('.preview-pill').forEach(pill => {
+  pill.addEventListener('click', () => {
+    const preset = pill.dataset.preset;
+    if (preset) {
+      applyPreset(preset);
+    }
+  });
+});
+
 // ─── Playback Controls ───────────────────────────────────────────────────────
 
 btnPause.addEventListener('click', togglePause);
@@ -1272,6 +1304,34 @@ inputCustomChars?.addEventListener('input', () => readConfig());
 checkInvert?.addEventListener('change', () => readConfig());
 selectFps?.addEventListener('change', () => readConfig());
 selectFps?.addEventListener('input', () => readConfig());
+
+function setQualityProfile(profile) {
+  if (profile === 'fast') {
+    if (rangeCols) rangeCols.value = '50';
+    if (valCols) valCols.textContent = '50';
+    if (rangeFontSize) rangeFontSize.value = '12';
+    if (valFontSize) valFontSize.textContent = '12';
+    if (selectFps) selectFps.value = '30';
+  } else if (profile === 'ultra') {
+    if (rangeCols) rangeCols.value = '120';
+    if (valCols) valCols.textContent = '120';
+    if (rangeFontSize) rangeFontSize.value = '7';
+    if (valFontSize) valFontSize.textContent = '7';
+    if (selectFps) selectFps.value = '60';
+  } else { // balanced
+    if (rangeCols) rangeCols.value = '80';
+    if (valCols) valCols.textContent = '80';
+    if (rangeFontSize) rangeFontSize.value = '10';
+    if (valFontSize) valFontSize.textContent = '10';
+    if (selectFps) selectFps.value = '60';
+  }
+  readConfig();
+}
+
+selectQualityMode?.addEventListener('change', () => {
+  setQualityProfile(selectQualityMode.value);
+  showToast(`Quality: ${selectQualityMode.value.toUpperCase()}`);
+});
 
 // ─── Preset buttons ───────────────────────────────────────────────────────────
 
@@ -1472,6 +1532,13 @@ function doScreenshot() {
   });
 }
 
+function openVideo2CharsExport() {
+  if (!cvExportType) return;
+  cvExportType.value = 'html';
+  cvRefreshSettings();
+  openConverter();
+}
+
 // Toggle dropdown open/close
 btnDownload.addEventListener('click', e => {
   e.stopPropagation();
@@ -1492,6 +1559,11 @@ document.addEventListener('click', () => {
 
 dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
+dlVideo2Chars?.addEventListener('click', () => {
+  openVideo2CharsExport();
+  dlMenu.classList.remove('open');
+  btnDownload.classList.remove('open');
+});
 dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
 dlCopyFrame?.addEventListener('click', () => {
   dlMenu.classList.remove('open');
@@ -1526,6 +1598,8 @@ const cvWarningText    = $('cvWarningText');
 const cvCfgColor       = $('cvCfgColor');
 const cvCfgChars       = $('cvCfgChars');
 const cvCfgCols        = $('cvCfgCols');
+const cvCfgFont        = $('cvCfgFont');
+const cvCodecBadge     = $('cvCodecBadge');
 const cvCfgFormat      = $('cvCfgFormat') || $('cvCfgFmt');
 const cvCfgFmt         = cvCfgFormat;
 const rowVideoFormat   = $('rowVideoFormat') || (cvCfgFormat ? cvCfgFormat.closest('.cv-stat-row') : null);
@@ -1929,8 +2003,40 @@ function drawConverterPreview(videoEl, overrideCfg = null) {
   }
 }
 
+function updateCodecBadge() {
+  if (!cvCodecBadge) return;
+  if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+    cvCodecBadge.textContent = 'MediaRecorder N/A';
+    cvCodecBadge.style.color = '#ff6b6b';
+    return;
+  }
+  const hasH264 = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.4d002a') ||
+                  MediaRecorder.isTypeSupported('video/mp4;codecs=avc1.42E01E') ||
+                  MediaRecorder.isTypeSupported('video/mp4');
+  const hasH265 = MediaRecorder.isTypeSupported('video/mp4;codecs=hvc1') ||
+                  MediaRecorder.isTypeSupported('video/mp4;codecs=hev1');
+  const hasVp9  = MediaRecorder.isTypeSupported('video/webm;codecs=vp9');
+  const hasVp8  = MediaRecorder.isTypeSupported('video/webm;codecs=vp8') ||
+                  MediaRecorder.isTypeSupported('video/webm');
+
+  const codecs = [];
+  if (hasH264) codecs.push('H.264');
+  if (hasH265) codecs.push('H.265');
+  if (hasVp9)  codecs.push('VP9');
+  else if (hasVp8) codecs.push('WebM');
+
+  if (codecs.length > 0) {
+    cvCodecBadge.textContent = codecs.join(' / ') + ' Ready';
+    cvCodecBadge.style.color = 'var(--green)';
+  } else {
+    cvCodecBadge.textContent = 'Fallback Only';
+    cvCodecBadge.style.color = 'var(--amber)';
+  }
+}
+
 function cvRefreshSettings() {
   readConfig();
+  updateCodecBadge();
   cvCfgColor.textContent = cfg.colorMode.toUpperCase();
   cvCfgChars.textContent = charSetLabel(cfg.charSet);
   cvCfgCols.textContent  = cfg.cols + ' cols';
@@ -2047,6 +2153,7 @@ function cvSetFile(file) {
 [cvCfgFormat, cvCfgRes, cvCfgFpsOverride, cvExportType].filter(Boolean).forEach(control => {
   control.addEventListener('change', () => {
     updateExportModeUI();
+    updateCodecBadge();
     updateLongVideoWarning();
     const vid = (cvSourceVideo && cvSourceVideo.videoWidth) ? cvSourceVideo : sourceVideo;
     if (vid) {

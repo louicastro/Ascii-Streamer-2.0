@@ -2118,15 +2118,26 @@ export class AsciliHtmlExporter {
       onError
     } = opts;
 
+    if (!videoEl || !videoEl.videoWidth || !videoEl.videoHeight) {
+      onError?.('Source video is not ready yet. Load a valid video before exporting a Video2Chars HTML player.');
+      return;
+    }
+
     if (this._running) return;
     this._running = true;
     this._aborted = false;
     this._frames = [];
 
-    const rawDuration = videoEl.duration;
-    const duration = (Number.isFinite(rawDuration) && rawDuration > 0) ? rawDuration : 10;
+    const rawDuration = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
+    if (!rawDuration || rawDuration <= 0) {
+      this._running = false;
+      onError?.('This video does not expose a valid duration. Please use a supported MP4/WebM source.');
+      return;
+    }
+
+    const duration = rawDuration;
     const fps = Math.min(30, Math.max(5, targetFps));
-    const totalFrames = Math.min(maxFrames, Math.max(1, Math.ceil(duration * fps)));
+    const totalFrames = Math.min(Math.max(1, Number(maxFrames) || 1200), Math.max(1, Math.ceil(duration * fps)));
     const cols = Math.min(120, Math.max(20, Math.round(cfg.cols || 80)));
     const vw = videoEl.videoWidth || 640;
     const vh = videoEl.videoHeight || 480;
