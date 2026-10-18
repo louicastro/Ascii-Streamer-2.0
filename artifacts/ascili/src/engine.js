@@ -118,7 +118,7 @@ export function adjustPixel(r, g, b, brightness, contrast, gamma, saturation) {
 const ESC = { '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;', "'":'&#39;' };
 function esc(ch) { return ESC[ch] || ch; }
 
-function hexToRgbVec3(hex) {
+export function hexToRgbVec3(hex) {
   if (!hex || hex[0] !== '#') return [0.22, 1.0, 0.32];
   const r = parseInt(hex.slice(1, 3), 16) / 255.0;
   const g = parseInt(hex.slice(3, 5), 16) / 255.0;
@@ -929,10 +929,379 @@ class AsciliCanvasWorkerRenderer {
   }
 }
 
+// ─── Character Set Engines ──────────────────────────────────────────────────
+
+export class BaseCharacterSetEngine {
+  constructor(id, name, characters, options = {}) {
+    this.id = id;
+    this.name = name;
+    this.characters = typeof characters === 'string' ? Array.from(characters) : [...characters];
+    this.options = options;
+    this.edgeChars = options.edgeChars || ['-', '|', '/', '\\', ' '];
+    this.charMap = [...this.characters];
+    for (const ec of this.edgeChars) {
+      if (!this.charMap.includes(ec)) this.charMap.push(ec);
+    }
+    this.charToIdx = new Map();
+    this.charMap.forEach((ch, idx) => this.charToIdx.set(ch, idx));
+  }
+
+  get length() {
+    return this.characters.length;
+  }
+
+  get rawString() {
+    return this.characters.join('');
+  }
+
+  getRampData(invertChars = false) {
+    const ramp = new Uint8Array(256);
+    const n = this.characters.length;
+    if (n <= 0) return ramp;
+    for (let i = 0; i < 256; i++) {
+      const lum = i / 255.0;
+      let ci = (lum * (n - 1) + 0.5) | 0;
+      if (ci >= n) ci = n - 1;
+      else if (ci < 0) ci = 0;
+      if (invertChars) ci = (n - 1) - ci;
+      ramp[i] = ci;
+    }
+    return ramp;
+  }
+
+  getCharForLuminance(lum, invert = false) {
+    const n = this.characters.length;
+    if (n === 0) return ' ';
+    let ci = Math.round(lum * (n - 1));
+    if (ci >= n) ci = n - 1;
+    else if (ci < 0) ci = 0;
+    if (invert) ci = (n - 1) - ci;
+    return this.characters[ci] ?? ' ';
+  }
+
+  getCharIndexForLuminance(lum, invert = false) {
+    const n = this.characters.length;
+    if (n <= 0) return 0;
+    let ci = (lum * (n - 1) + 0.5) | 0;
+    if (ci >= n) ci = n - 1;
+    else if (ci < 0) ci = 0;
+    if (invert) ci = (n - 1) - ci;
+    return ci;
+  }
+
+  getEdgeChar(gx, gy) {
+    const absGx = Math.abs(gx);
+    const absGy = Math.abs(gy);
+    if (absGy > 1.8 * absGx) return '-';
+    if (absGx > 1.8 * absGy) return '|';
+    return (gx * gy > 0) ? '\\' : '/';
+  }
+}
+
+export class StandardCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('standard', 'Standard ASCII Ramp', CHAR_SETS.standard);
+  }
+}
+
+export class ExtendedCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('extended', 'Extended Typographic Ramp', CHAR_SETS.extended);
+  }
+}
+
+export class BlockCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('block', 'Unicode Block Shading Ramp', CHAR_SETS.block);
+  }
+}
+
+export class BrailleCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('braille', 'Unicode Braille Patterns', CHAR_SETS.braille);
+  }
+}
+
+export class MatrixCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('matrix', 'Matrix Digital Rain Ramp', CHAR_SETS.matrix);
+  }
+}
+
+export class MinimalCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('minimal', 'Minimalist Ramp', CHAR_SETS.minimal);
+  }
+}
+
+export class Video2CharsCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('video2chars', 'Video2Chars 83-Char Ramp', CHAR_SETS.video2chars);
+  }
+}
+
+export class CharacterSetEngineRegistry {
+  constructor() {
+    this._engines = new Map();
+    this.register(new StandardCharEngine());
+    this.register(new ExtendedCharEngine());
+    this.register(new BlockCharEngine());
+    this.register(new BrailleCharEngine());
+    this.register(new MatrixCharEngine());
+    this.register(new MinimalCharEngine());
+    this.register(new Video2CharsCharEngine());
+  }
+
+  register(engine) {
+    this._engines.set(engine.id, engine);
+    return this;
+  }
+
+  get(idOrChars) {
+    if (!idOrChars) return this._engines.get('standard');
+    if (typeof idOrChars === 'string') {
+      if (this._engines.has(idOrChars)) return this._engines.get(idOrChars);
+      for (const eng of this._engines.values()) {
+        if (eng.rawString === idOrChars) return eng;
+      }
+      return new BaseCharacterSetEngine('custom', 'Custom Character Set', idOrChars);
+    }
+    if (Array.isArray(idOrChars)) {
+      return new BaseCharacterSetEngine('custom', 'Custom Character Set', idOrChars);
+    }
+    return this._engines.get('standard');
+  }
+
+  getAll() {
+    return Array.from(this._engines.values());
+  }
+}
+
+export const characterSetRegistry = new CharacterSetEngineRegistry();
+export function getCharacterSetEngine(idOrChars) {
+  return characterSetRegistry.get(idOrChars);
+}
+
+// ─── Mode Engines ───────────────────────────────────────────────────────────
+
+export class BaseModeEngine {
+  constructor(id, name, options = {}) {
+    this.id = id;
+    this.name = name;
+    this.colorMode = options.colorMode || 'monochrome';
+    this.defaultCharSet = options.defaultCharSet || 'standard';
+    this.defaultMonoColor = options.defaultMonoColor || '#39ff52';
+    this.defaultBgColor = options.defaultBgColor || '#0a0a0c';
+    this.scanlinesSupported = options.scanlinesSupported ?? true;
+    this.edgeDetectSupported = options.edgeDetectSupported ?? true;
+    this.contrastMultiplier = options.contrastMultiplier ?? 1.0;
+  }
+
+  prepareConfig(userConfig = {}) {
+    return {
+      colorMode: this.colorMode,
+      charSet: userConfig.charSet || this.defaultCharSet,
+      monoColor: userConfig.monoColor || this.defaultMonoColor,
+      bgColor: userConfig.bgColor || this.defaultBgColor,
+      scanlines: userConfig.scanlines ?? false,
+      edgeDetection: userConfig.edgeDetection ?? (userConfig.enableEdgeDetection ?? false),
+      brightness: userConfig.brightness ?? 0,
+      contrast: userConfig.contrast ?? 0,
+      gamma: userConfig.gamma ?? 0,
+      saturation: userConfig.saturation ?? 0,
+      invertChars: Boolean(userConfig.invertChars),
+      ...userConfig,
+    };
+  }
+
+  getColorForPixel(r, g, b, lum, config) {
+    if (this.colorMode === 'monochrome') {
+      return hexToRgbVec3(config.monoColor || this.defaultMonoColor);
+    }
+    if (this.colorMode === 'grayscale') {
+      return [lum, lum, lum];
+    }
+    return [r / 255.0, g / 255.0, b / 255.0];
+  }
+
+  getShaderModeInt() {
+    switch (this.colorMode) {
+      case 'monochrome': return 0;
+      case 'grayscale':  return 1;
+      case 'ansi16':     return 2;
+      case 'ansi256':    return 3;
+      default:           return 4; // TrueColor RGB
+    }
+  }
+}
+
+export class ClassicModeEngine extends BaseModeEngine {
+  constructor() {
+    super('classic', 'Classic CRT Monochrome', {
+      colorMode: 'monochrome',
+      defaultCharSet: 'standard',
+      defaultMonoColor: '#39ff52',
+      defaultBgColor: '#0a0a0c',
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: 'monochrome',
+      monoColor: userConfig.monoColor || '#39ff52',
+      bgColor: userConfig.bgColor || '#0a0a0c',
+    });
+  }
+}
+
+export class MatrixModeEngine extends BaseModeEngine {
+  constructor() {
+    super('matrix', 'Matrix Digital Rain', {
+      colorMode: 'monochrome',
+      defaultCharSet: 'matrix',
+      defaultMonoColor: '#00ff66',
+      defaultBgColor: '#020b04',
+      scanlinesSupported: true,
+      edgeDetectSupported: true,
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: 'monochrome',
+      monoColor: userConfig.monoColor || '#00ff66',
+      bgColor: userConfig.bgColor || '#020b04',
+      contrast: userConfig.contrast ?? 30,
+      brightness: userConfig.brightness ?? 10,
+      scanlines: userConfig.scanlines ?? true,
+      enableEdgeDetection: userConfig.enableEdgeDetection ?? true,
+    });
+  }
+}
+
+export class TrueColorModeEngine extends BaseModeEngine {
+  constructor() {
+    super('truecolor', 'TrueColor 24-Bit RGB', {
+      colorMode: 'truecolor',
+      defaultCharSet: 'extended',
+      defaultBgColor: '#0a0a0c',
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: 'truecolor',
+      bgColor: userConfig.bgColor || '#0a0a0c',
+    });
+  }
+}
+
+export class BrailleModeEngine extends BaseModeEngine {
+  constructor() {
+    super('braille', 'Braille Sub-Dot Matrix', {
+      colorMode: 'monochrome',
+      defaultCharSet: 'braille',
+      defaultMonoColor: '#ffffff',
+      defaultBgColor: '#0a0a0c',
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: 'monochrome',
+      monoColor: userConfig.monoColor || '#ffffff',
+      bgColor: userConfig.bgColor || '#0a0a0c',
+      contrast: userConfig.contrast ?? 20,
+    });
+  }
+}
+
+export class BlocksModeEngine extends BaseModeEngine {
+  constructor() {
+    super('blocks', 'Unicode Shaded Blocks', {
+      colorMode: 'truecolor',
+      defaultCharSet: 'block',
+      defaultBgColor: '#0a0a0c',
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: 'truecolor',
+      bgColor: userConfig.bgColor || '#0a0a0c',
+    });
+  }
+}
+
+export class Video2CharsModeEngine extends BaseModeEngine {
+  constructor() {
+    super('video2chars', 'Video2Chars Paper & Art Engine', {
+      colorMode: 'truecolor',
+      defaultCharSet: 'video2chars',
+      defaultBgColor: '#ffffff',
+      contrastMultiplier: 1.2,
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      ...userConfig,
+      colorMode: userConfig.colorMode || 'truecolor',
+      bgColor: userConfig.bgColor || '#ffffff',
+      contrast: userConfig.contrast ?? 20,
+      brightness: userConfig.brightness ?? 5,
+      saturation: userConfig.saturation ?? 10,
+    });
+  }
+}
+
+export class ModeEngineRegistry {
+  constructor() {
+    this._engines = new Map();
+    this.register(new ClassicModeEngine());
+    this.register(new MatrixModeEngine());
+    this.register(new TrueColorModeEngine());
+    this.register(new BrailleModeEngine());
+    this.register(new BlocksModeEngine());
+    this.register(new Video2CharsModeEngine());
+  }
+
+  register(engine) {
+    this._engines.set(engine.id, engine);
+    return this;
+  }
+
+  get(id) {
+    if (!id) return this._engines.get('classic');
+    const key = String(id).toLowerCase();
+    if (this._engines.has(key)) return this._engines.get(key);
+    if (key === 'mono' || key === 'monochrome') return this._engines.get('classic');
+    if (key === 'rgb') return this._engines.get('truecolor');
+    return this._engines.get('classic');
+  }
+
+  getAll() {
+    return Array.from(this._engines.values());
+  }
+}
+
+export const modeRegistry = new ModeEngineRegistry();
+export function getModeEngine(id) {
+  return modeRegistry.get(id);
+}
+
 // ─── AsciliEngine (GPU Vision Engine - Sub-1.5ms, 2M Chars @ 120 FPS) ────────
 
 export class AsciliEngine {
   constructor() {
+    this.modeRegistry    = new ModeEngineRegistry();
+    this.charSetRegistry = new CharacterSetEngineRegistry();
+
     this._sampleCanvas  = document.createElement('canvas');
     this._sampleCtx     = this._sampleCanvas.getContext('2d', { willReadFrequently: true });
     this._atlas         = new AsciliGlyphAtlas();
@@ -964,26 +1333,49 @@ export class AsciliEngine {
 
   get gpuCanvas() { return this._gpuCanvas; }
 
-  renderFrame(videoEl, targetCanvas, config) {
+  getModeEngine(mode) {
+    return this.modeRegistry.get(mode);
+  }
+
+  getCharSetEngine(charSet) {
+    return this.charSetRegistry.get(charSet);
+  }
+
+  registerModeEngine(engine) {
+    this.modeRegistry.register(engine);
+    return this;
+  }
+
+  registerCharSetEngine(engine) {
+    this.charSetRegistry.register(engine);
+    return this;
+  }
+
+  renderFrame(videoEl, targetCanvas, config = {}) {
     if (!videoEl) return { rows: 0, cols: 0, chars: 0 };
+
+    // Delegate mode-specific and character-set-specific preparation to dedicated engines
+    const modeEngine = this.getModeEngine(config.mode || config.preset || config.colorMode || 'classic');
+    const charSetEngine = this.getCharSetEngine(config.charSet || modeEngine.defaultCharSet);
+    const preparedConfig = modeEngine.prepareConfig(config);
 
     const vw = videoEl.videoWidth  || videoEl.width  || 640;
     const vh = videoEl.videoHeight || videoEl.height || 480;
-    const crop = computeCropBox(vw, vh, config.aspectRatio);
+    const crop = computeCropBox(vw, vh, preparedConfig.aspectRatio);
     const cellRatio = (crop.sh / crop.sw) * 0.45;
-    const requestedCols = Math.min(1000, Math.max(20, Math.round(config.cols || 80)));
+    const requestedCols = Math.min(1000, Math.max(20, Math.round(preparedConfig.cols || 80)));
     const maxColsForSafeFrame = Math.floor(Math.sqrt(500_000 / Math.max(cellRatio, 0.01)));
-    const cols = config.cols ? Math.min(1000, Math.max(20, Math.round(config.cols))) : Math.min(requestedCols, Math.max(20, maxColsForSafeFrame));
+    const cols = preparedConfig.cols ? Math.min(1000, Math.max(20, Math.round(preparedConfig.cols))) : Math.min(requestedCols, Math.max(20, maxColsForSafeFrame));
 
-    const rows = config.rows ?? Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
+    const rows = preparedConfig.rows ?? Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
     const totalCells = rows * cols;
 
     this._lastCols   = cols;
     this._lastRows   = rows;
-    this._lastConfig = { ...config };
+    this._lastConfig = { ...preparedConfig };
     this._lastSource = videoEl;
 
-    this._atlas.update(config.charSet);
+    this._atlas.update(charSetEngine.rawString);
 
     if (targetCanvas instanceof HTMLCanvasElement) {
       if (targetCanvas.width <= 0 || targetCanvas.height <= 0) {
@@ -1031,7 +1423,7 @@ export class AsciliEngine {
         if (this._gpuCanvas.width !== targetCanvas.width) this._gpuCanvas.width = targetCanvas.width;
         if (this._gpuCanvas.height !== targetCanvas.height) this._gpuCanvas.height = targetCanvas.height;
         try {
-          rendered = this._webgl.renderDirect(videoEl, cols, rows, this._atlas, config);
+          rendered = this._webgl.renderDirect(videoEl, cols, rows, this._atlas, preparedConfig);
           if (rendered && this._displayCtx && targetCanvas.width > 0 && targetCanvas.height > 0) {
             this._displayCtx.drawImage(this._gpuCanvas, 0, 0, targetCanvas.width, targetCanvas.height);
           }
@@ -1045,11 +1437,11 @@ export class AsciliEngine {
 
       // Fallback path: engaged if WebGL failed or is unavailable on this device
       if (!rendered) {
-        if (!config.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
+        if (!preparedConfig.syncOnly && !this._canvasWorker && !this._canvas2d && totalCells <= 500_000) {
           this._initFallbackRenderer(targetCanvas);
         }
-        if (!config.syncOnly && this._canvasWorker && totalCells <= 500_000) {
-          rendered = this._canvasWorker.render(videoEl, cols, rows, this._atlas, config);
+        if (!preparedConfig.syncOnly && this._canvasWorker && totalCells <= 500_000) {
+          rendered = this._canvasWorker.render(videoEl, cols, rows, this._atlas, preparedConfig);
         }
         if (!rendered && this._canvasWorker?.failed) {
           this._canvasWorker.worker.terminate();
@@ -1062,7 +1454,7 @@ export class AsciliEngine {
             try { this._canvas2d = new AsciliCanvas2DRenderer(targetCanvas); } catch { this._canvas2d = null; }
           }
           if (this._canvas2d) {
-            this._renderFallback2D(videoEl, cols, rows, config);
+            this._renderFallback2D(videoEl, cols, rows, preparedConfig, modeEngine, charSetEngine);
             rendered = true;
           }
         }
@@ -1105,7 +1497,7 @@ export class AsciliEngine {
     }
   }
 
-  _renderFallback2D(videoEl, cols, rows, config) {
+  _renderFallback2D(videoEl, cols, rows, config, modeEngine, charSetEngine) {
     if (this._sampleCanvas.width !== cols || this._sampleCanvas.height !== rows) {
       this._sampleCanvas.width  = cols;
       this._sampleCanvas.height = rows;
@@ -1113,6 +1505,9 @@ export class AsciliEngine {
     const vw = videoEl.videoWidth  || videoEl.width  || 640;
     const vh = videoEl.videoHeight || videoEl.height || 480;
     const crop = computeCropBox(vw, vh, config.aspectRatio);
+
+    const mode = modeEngine || this.getModeEngine(config.mode || config.preset || config.colorMode || 'classic');
+    const charEngine = charSetEngine || this.getCharSetEngine(config.charSet || mode.defaultCharSet);
 
     this._sampleCtx.save();
     if (config.mirror) {
@@ -1175,21 +1570,14 @@ export class AsciliEngine {
           const magSq = gx * gx + gy * gy;
 
           if (magSq >= edgeThresholdSq) {
-            const absGx = Math.abs(gx);
-            const absGy = Math.abs(gy);
-            if (absGy > 1.8 * absGx) charToUse = '-';
-            else if (absGx > 1.8 * absGy) charToUse = '|';
-            else charToUse = (gx * gy > 0) ? '\\' : '/';
+            charToUse = charEngine.getEdgeChar(gx, gy);
           }
         }
 
         if (charToUse) {
           charGrid[idx] = charToUse;
         } else {
-          let ci = (lumGrid[idx] * (n - 1) + 0.5) | 0;
-          if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
-          if (config.invertChars) ci = (n - 1) - ci;
-          charGrid[idx] = ci;
+          charGrid[idx] = charEngine.getCharIndexForLuminance(lumGrid[idx], config.invertChars);
         }
       }
     }
@@ -1212,7 +1600,7 @@ export class AsciliEngine {
       try { this._canvas2d = new AsciliCanvas2DRenderer(this._currentTarget); } catch { this._canvas2d = null; }
     }
     if (this._canvas2d) {
-      this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || '#39ff52', config.fontSize || 10, config.bgColor || '#000000');
+      this._canvas2d.render(cols, rows, charGrid, colorGrid, this._atlas, isMono, config.monoColor || mode.defaultMonoColor, config.fontSize || 10, config.bgColor || mode.defaultBgColor);
     }
   }
 
@@ -1222,6 +1610,9 @@ export class AsciliEngine {
     const src  = this._lastSource;
     const cfg  = this._lastConfig || {};
     if (!cols || !rows || !src) return '';
+
+    const mode = this.getModeEngine(cfg.mode || cfg.preset || cfg.colorMode || 'classic');
+    const charEngine = this.getCharSetEngine(cfg.charSet || mode.defaultCharSet);
 
     const off = document.createElement('canvas');
     off.width  = cols;
@@ -1240,8 +1631,7 @@ export class AsciliEngine {
     octx.restore();
 
     const imgData = octx.getImageData(0, 0, cols, rows).data;
-    const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
-    const nChars = chars.length;
+    const nChars = charEngine.length;
     const invert = cfg.invertChars || false;
 
     const cells = rows * cols;
@@ -1264,10 +1654,7 @@ export class AsciliEngine {
         let line = '';
         const offset = cr * cols;
         for (let c = 0; c < cols; c++) {
-          let ci = (lumGrid[offset + c] * (nChars - 1) + 0.5) | 0;
-          if (ci >= nChars) ci = nChars - 1; else if (ci < 0) ci = 0;
-          if (invert) ci = (nChars - 1) - ci;
-          line += chars[ci] ?? ' ';
+          line += charEngine.getCharForLuminance(lumGrid[offset + c], invert);
         }
         lines.push(line);
       }
@@ -1285,6 +1672,9 @@ export class AsciliEngine {
     const cfg  = this._lastConfig || {};
     if (!cols || !rows || !src) return '';
 
+    const mode = this.getModeEngine(cfg.mode || cfg.preset || cfg.colorMode || 'classic');
+    const charEngine = this.getCharSetEngine(cfg.charSet || mode.defaultCharSet);
+
     const off = document.createElement('canvas');
     off.width  = cols;
     off.height = rows;
@@ -1292,11 +1682,9 @@ export class AsciliEngine {
     octx.drawImage(src, 0, 0, cols, rows);
     const imgData = octx.getImageData(0, 0, cols, rows).data;
 
-    const chars     = Array.from(cfg.charSet || CHAR_SETS.standard);
-    const nChars    = chars.length;
     const invert    = cfg.invertChars || false;
-    const isMono    = (cfg.colorMode || 'monochrome') === 'monochrome';
-    const monoColor = options.monoColor || '#39ff52';
+    const isMono    = (cfg.colorMode || mode.colorMode) === 'monochrome';
+    const monoColor = options.monoColor || cfg.monoColor || mode.defaultMonoColor;
     const fontSize  = options.fontSize  || cfg.fontSize || 10;
 
     const htmlLines = [];
@@ -1311,10 +1699,7 @@ export class AsciliEngine {
           for (let c = 0; c < cols; c++) {
             const p4 = (offset + c) * 4;
             const lum = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
-            let ci = (lum * (nChars - 1) + 0.5) | 0;
-            if (ci >= nChars) ci = nChars - 1; else if (ci < 0) ci = 0;
-            if (invert) ci = (nChars - 1) - ci;
-            line += esc(chars[ci] ?? ' ');
+            line += esc(charEngine.getCharForLuminance(lum, invert));
           }
         } else {
           let currColor = null;
@@ -1323,10 +1708,7 @@ export class AsciliEngine {
             const p4 = (offset + c) * 4;
             const red = imgData[p4], green = imgData[p4+1], blue = imgData[p4+2];
             const lum = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0;
-            let ci = (lum * (nChars - 1) + 0.5) | 0;
-            if (ci >= nChars) ci = nChars - 1; else if (ci < 0) ci = 0;
-            if (invert) ci = (nChars - 1) - ci;
-            const ch = esc(chars[ci] ?? ' ');
+            const ch = esc(charEngine.getCharForLuminance(lum, invert));
             const colorKey = `${red},${green},${blue}`;
 
             if (colorKey === currColor) {
@@ -1349,7 +1731,7 @@ export class AsciliEngine {
       if (endR < rows) await new Promise(res => setTimeout(res, 0));
     }
 
-    const bg    = '#000';
+    const bg    = cfg.bgColor || mode.defaultBgColor || '#000';
     const color = isMono ? monoColor : '#fff';
     const body  = htmlLines.join('\n');
     return `<!DOCTYPE html>
@@ -1373,6 +1755,9 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
     const cfg  = this._lastConfig || {};
     if (!cols || !rows || !src) return '';
 
+    const mode = this.getModeEngine(cfg.mode || cfg.preset || cfg.colorMode || 'classic');
+    const charEngine = this.getCharSetEngine(cfg.charSet || mode.defaultCharSet);
+
     const off = document.createElement('canvas');
     off.width  = cols;
     off.height = rows;
@@ -1380,8 +1765,6 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
     octx.drawImage(src, 0, 0, cols, rows);
     const imgData = octx.getImageData(0, 0, cols, rows).data;
 
-    const chars = Array.from(cfg.charSet || CHAR_SETS.standard);
-    const n = chars.length;
     const invert = cfg.invertChars || false;
 
     const lines = [];
@@ -1391,10 +1774,7 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
       for (let c = 0; c < cols; c++) {
         const p4 = (offset + c) * 4;
         const lum = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
-        let ci = (lum * (n - 1) + 0.5) | 0;
-        if (ci >= n) ci = n - 1; else if (ci < 0) ci = 0;
-        if (invert) ci = (n - 1) - ci;
-        line += chars[ci] ?? ' ';
+        line += charEngine.getCharForLuminance(lum, invert);
       }
       lines.push(line);
     }
@@ -1403,9 +1783,13 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
 
   getStyledHtml(options = {}) {
     const text = this.getPlainText();
-    const bg   = '#000';
-    const color = (options.colorMode || 'monochrome') === 'monochrome' ? (options.monoColor || '#39ff52') : '#fff';
-    const fontSize = options.fontSize || 10;
+    const cfg = this._lastConfig || {};
+    const mode = this.getModeEngine(cfg.mode || cfg.preset || cfg.colorMode || 'classic');
+    const bg   = cfg.bgColor || mode.defaultBgColor || '#000';
+    const color = (options.colorMode || cfg.colorMode || mode.colorMode) === 'monochrome'
+      ? (options.monoColor || cfg.monoColor || mode.defaultMonoColor)
+      : '#fff';
+    const fontSize = options.fontSize || cfg.fontSize || 10;
     return `<!DOCTYPE html>
 <html>
 <head>

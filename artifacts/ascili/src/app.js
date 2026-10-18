@@ -388,6 +388,7 @@ function applyPreset(name) {
   if (checkTemporal) checkTemporal.checked = (p.temporalSmoothing ?? 0.35) > 0;
   if (checkAdaptiveContrast) checkAdaptiveContrast.checked = p.adaptiveContrast ?? true;
 
+  cfg.mode = name;
   presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === name));
   readConfig();
   showToast('Preset: ' + name.toUpperCase());
