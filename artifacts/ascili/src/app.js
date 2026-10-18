@@ -1567,93 +1567,6 @@ function doScreenshot() {
   });
 }
 
-function openVideo2CharsExport() {
-  if (!cvExportType) return;
-  cvExportType.value = 'html';
-  cvRefreshSettings();
-  openConverter();
-}
-
-// Toggle dropdown open/close
-btnDownload.addEventListener('click', e => {
-  e.stopPropagation();
-  const open = dlMenu.classList.toggle('open');
-  btnDownload.classList.toggle('open', open);
-});
-
-// Prevent menu clicks from bubbling to document click listener
-dlMenu.addEventListener('click', e => {
-  e.stopPropagation();
-});
-
-// Close on outside click
-document.addEventListener('click', () => {
-  dlMenu.classList.remove('open');
-  btnDownload.classList.remove('open');
-});
-
-dlTxt.addEventListener('click', () => { doDownloadTxt(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
-dlHtml.addEventListener('click', () => { doDownloadHtml(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
-dlVideo2Chars?.addEventListener('click', () => {
-  openVideo2CharsExport();
-  dlMenu.classList.remove('open');
-  btnDownload.classList.remove('open');
-});
-dlPng.addEventListener('click',  () => { doScreenshot();   dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
-dlCopyFrame?.addEventListener('click', () => {
-  dlMenu.classList.remove('open');
-  btnDownload.classList.remove('open');
-  copyAsciiFrameToClipboard();
-});
-dlRecordGif?.addEventListener('click', () => {
-  dlMenu.classList.remove('open');
-  btnDownload.classList.remove('open');
-  toggleGifRecording();
-});
-if (dlRecordVideo) {
-  dlRecordVideo.addEventListener('click', () => {
-    dlMenu.classList.remove('open');
-    btnDownload.classList.remove('open');
-    const res = selectRecordRes?.value || '1080p';
-    const fmt = selectRecordFormat?.value || 'mp4-h264';
-    handleLiveRecordAction({ resolution: res, format: fmt });
-  });
-}
-if (dlRecordVideo720) {
-  dlRecordVideo720.addEventListener('click', () => {
-    dlMenu.classList.remove('open');
-    btnDownload.classList.remove('open');
-    const fmt = selectRecordFormat?.value || 'mp4-h264';
-    handleLiveRecordAction({ resolution: '720p', format: fmt });
-  });
-}
-
-if (selectRecordFormat && cvCfgFormat) {
-  selectRecordFormat.addEventListener('change', () => {
-    cvCfgFormat.value = selectRecordFormat.value;
-    updateCodecBadge();
-    updateRecUI(liveRecorder.running);
-  });
-  cvCfgFormat.addEventListener('change', () => {
-    selectRecordFormat.value = cvCfgFormat.value;
-    updateRecUI(liveRecorder.running);
-  });
-}
-
-if (selectRecordRes && cvCfgRes) {
-  selectRecordRes.addEventListener('change', () => {
-    cvCfgRes.value = selectRecordRes.value;
-    updateRecUI(liveRecorder.running);
-  });
-  cvCfgRes.addEventListener('change', () => {
-    selectRecordRes.value = cvCfgRes.value;
-    updateRecUI(liveRecorder.running);
-  });
-}
-
-dlVideo.addEventListener('click', () => { openConverter(); dlMenu.classList.remove('open'); btnDownload.classList.remove('open'); });
-btnOpenExportModal?.addEventListener('click', () => { openConverter(); });
-
 // ─── Video Converter ─────────────────────────────────────────────────────────
 
 const cvOverlay        = $('cvOverlay');
@@ -1702,6 +1615,93 @@ const cvHtmlExporter = new AsciliHtmlExporter();
 const SRT_MAX_COLS = 40;
 const SRT_DEFAULT_FPS = 15;
 const SRT_SIZE_BUDGET = 950 * 1024 * 1024;
+
+function openVideo2CharsExport() {
+  if (!cvExportType) return;
+  cvExportType.value = 'html';
+  cvRefreshSettings();
+  openConverter();
+}
+
+// Toggle dropdown open/close
+btnDownload?.addEventListener('click', e => {
+  e.stopPropagation();
+  const open = dlMenu?.classList.toggle('open');
+  btnDownload?.classList.toggle('open', open);
+});
+
+// Prevent menu clicks from bubbling to document click listener
+dlMenu?.addEventListener('click', e => {
+  e.stopPropagation();
+});
+
+// Close on outside click
+document.addEventListener('click', () => {
+  dlMenu?.classList.remove('open');
+  btnDownload?.classList.remove('open');
+});
+
+dlTxt?.addEventListener('click', () => { doDownloadTxt(); dlMenu?.classList.remove('open'); btnDownload?.classList.remove('open'); });
+dlHtml?.addEventListener('click', () => { doDownloadHtml(); dlMenu?.classList.remove('open'); btnDownload?.classList.remove('open'); });
+dlVideo2Chars?.addEventListener('click', () => {
+  openVideo2CharsExport();
+  dlMenu?.classList.remove('open');
+  btnDownload?.classList.remove('open');
+});
+dlPng?.addEventListener('click',  () => { doScreenshot();   dlMenu?.classList.remove('open'); btnDownload?.classList.remove('open'); });
+dlCopyFrame?.addEventListener('click', () => {
+  dlMenu?.classList.remove('open');
+  btnDownload?.classList.remove('open');
+  copyAsciiFrameToClipboard();
+});
+dlRecordGif?.addEventListener('click', () => {
+  dlMenu?.classList.remove('open');
+  btnDownload?.classList.remove('open');
+  toggleGifRecording();
+});
+if (dlRecordVideo) {
+  dlRecordVideo.addEventListener('click', () => {
+    dlMenu?.classList.remove('open');
+    btnDownload?.classList.remove('open');
+    const res = selectRecordRes?.value || '1080p';
+    const fmt = selectRecordFormat?.value || 'mp4-h264';
+    handleLiveRecordAction({ resolution: res, format: fmt });
+  });
+}
+if (dlRecordVideo720) {
+  dlRecordVideo720.addEventListener('click', () => {
+    dlMenu?.classList.remove('open');
+    btnDownload?.classList.remove('open');
+    const fmt = selectRecordFormat?.value || 'mp4-h264';
+    handleLiveRecordAction({ resolution: '720p', format: fmt });
+  });
+}
+
+if (selectRecordFormat && cvCfgFormat) {
+  selectRecordFormat.addEventListener('change', () => {
+    cvCfgFormat.value = selectRecordFormat.value;
+    updateCodecBadge();
+    updateRecUI(liveRecorder.running);
+  });
+  cvCfgFormat.addEventListener('change', () => {
+    selectRecordFormat.value = cvCfgFormat.value;
+    updateRecUI(liveRecorder.running);
+  });
+}
+
+if (selectRecordRes && cvCfgRes) {
+  selectRecordRes.addEventListener('change', () => {
+    cvCfgRes.value = selectRecordRes.value;
+    updateRecUI(liveRecorder.running);
+  });
+  cvCfgRes.addEventListener('change', () => {
+    selectRecordRes.value = cvCfgRes.value;
+    updateRecUI(liveRecorder.running);
+  });
+}
+
+dlVideo?.addEventListener('click', () => { openConverter(); dlMenu?.classList.remove('open'); btnDownload?.classList.remove('open'); });
+btnOpenExportModal?.addEventListener('click', () => { openConverter(); });
 
 let cvSourceVideo = null;   // hidden video used by the converter
 let cvBlob        = null;   // result blob after encoding
