@@ -8,7 +8,7 @@ A state-of-the-art, high-performance, **edge-aware, temporally coherent ASCII vi
 
 ## 🌟 Key Features
 
-1. **AI Structural Edge Perception**:
+1. **Structural Edge Perception**:
    - Unlike basic ASCII converters that only map 1D pixel brightness, this engine computes 2D spatial gradients ($G_x, G_y$), edge magnitude, and orientation angles $\theta$.
    - Automatically maps edges to directional glyphs (`|`, `-`, `/`, `\`, `+`, `~`) to retain razor-sharp silhouettes, contours, and facial features.
 
