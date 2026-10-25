@@ -275,38 +275,6 @@ docker-compose up --build
 This boots:
 - `ascii-streamer-api`: Node.js server and ASCILI web application on port `3000`
 
-### Python AI Video Engine (`ai_video_engine`)
-
-The Python engine provides high-resolution edge-aware structural perception and headless video conversion:
-- **Throughput**: ~12–15 FPS for full 1080p60 Cairo rasterization on CPU with audio preservation; ~40+ FPS for raw ASCII conversion.
-- **Run Standalone Server**:
-  ```bash
-  python3 -m ai_video_engine.server 8000
-  ```
-- **Run Engine Tests**:
-  ```bash
-  pytest ai_video_engine/test_engine.py
-  ```
-
----
-
-## Cloud Deployment (Railway & GitHub Pages)
-
-### Railway Deployment
-The project is configured for seamless deployment on Railway via `railway.json` and `Dockerfile`:
-1. Link your GitHub repository to Railway.
-2. Railway detects `railway.json` and builds via `Dockerfile`.
-3. Health check runs automatically against `/api/health`.
-4. Environment variables to configure (optional):
-   - `PORT`: Automatically assigned by Railway (defaults to 3000).
-   - `DATABASE_URL`: Connection string for PostgreSQL (if persistence is enabled).
-   - `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS domains.
-
-### GitHub Pages Deployment
-A GitHub Actions workflow is provided in `.github/workflows/deploy.yml`:
-- Pushing to `main` automatically builds `artifacts/ascili` and deploys the static site to GitHub Pages.
-- Handles base URL subpath routing automatically.
-
 ---
 
 ## API Endpoints & Security Controls
