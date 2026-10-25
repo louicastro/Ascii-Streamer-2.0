@@ -1,4 +1,4 @@
-# 🎬 ASCILI AI Video Engine (Python)
+# 🎬 ASCILI Video Engine (Python)
 
 A state-of-the-art, high-performance, **edge-aware, temporally coherent ASCII video perception and conversion engine** written in raw Python.
 
