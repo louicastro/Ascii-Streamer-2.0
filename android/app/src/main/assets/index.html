@@ -53,6 +53,7 @@
       <button class="preset-btn" data-preset="braille" data-testid="preset-braille">[4] Braille Art</button>
       <button class="preset-btn" data-preset="blocks" data-testid="preset-blocks">[5] Block Pixels</button>
       <button class="preset-btn" data-preset="video2chars" data-testid="preset-video2chars">[6] Video2Chars</button>
+      <button class="preset-btn" data-preset="negative_space" data-testid="preset-negative_space">[7] Negative Space</button>
     </div>
 
     <div class="source-bar">
@@ -78,7 +79,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         File
       </button>
-      <input type="file" id="fileInput" accept="video/*" style="display:none" data-testid="input-file" />
+      <input type="file" id="fileInput" accept="video/*,image/*" style="display:none" data-testid="input-file" />
 
       <!-- Download dropdown -->
       <div class="dl-wrap" id="dlWrap">
@@ -190,6 +191,7 @@
             <div class="preview-pills">
               <button class="preview-pill" data-preset="classic" type="button">🟢 Classic Green</button>
               <button class="preview-pill" data-preset="matrix" type="button">🟩 Matrix Rain</button>
+              <button class="preview-pill" data-preset="negative_space" type="button">👤 Negative Space (Empty Person)</button>
               <button class="preview-pill" data-preset="video2chars" type="button">📄 Video2Chars Paper</button>
               <button class="preview-pill" data-preset="truecolor" type="button">🌈 TrueColor RGB</button>
               <button class="preview-pill" data-preset="braille" type="button">⠿ Braille Dots</button>
@@ -333,6 +335,11 @@
             <select class="setting-select" id="selectCharSet" data-testid="select-charset">
               <option value="standard">Standard (10 Chars)</option>
               <option value="extended">Extended (70 Chars)</option>
+              <option value="letters">Letters Alphabet (A–Z, a–z)</option>
+              <option value="numbers">Numbers (0–9)</option>
+              <option value="symbols">Special Symbols &amp; Punctuation</option>
+              <option value="alphanumeric">Alphanumeric Matrix Code</option>
+              <option value="binary">Binary (0 / 1)</option>
               <option value="video2chars">Video2Chars (83 Chars)</option>
               <option value="block">Block Shading</option>
               <option value="minimal">Minimal (5 Chars)</option>
@@ -354,6 +361,93 @@
           <div class="setting-row" id="rowCustomCharset" style="display:none">
             <label class="setting-label" for="inputCustomCharset">Custom Glyphs <span class="setting-value" id="valCustomChars">10 chars</span></label>
             <input class="setting-text" id="inputCustomCharset" type="text" value=" .:-=+*#%@" placeholder="Dark to bright characters..." />
+          </div>
+        </div>
+
+        <!-- Negative Space & Subject Segmentation -->
+        <div class="settings-section" id="sectionNegativeSpace">
+          <div class="section-label">NEGATIVE SPACE &amp; SEGMENTATION</div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="selectNegSpaceMode">Render Effect</label>
+            <select class="setting-select" id="selectNegSpaceMode" data-testid="select-neg-space-mode">
+              <option value="none">Normal ASCII (Full Frame)</option>
+              <option value="negative_space">Negative Space (Empty Person)</option>
+              <option value="inverted_ascii">Inverted ASCII (Empty Background)</option>
+              <option value="hybrid">Hybrid Mode (Dual Charsets)</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="checkSubjectDetection">Subject Detection</label>
+            <input type="checkbox" id="checkSubjectDetection" class="setting-checkbox" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="selectNegSpaceMethod">Detection Model</label>
+            <select class="setting-select" id="selectNegSpaceMethod" data-testid="select-neg-space-method">
+              <option value="auto" selected>Auto (Neural + Fast CV Fallback)</option>
+              <option value="neural">Neural Human (MediaPipe)</option>
+              <option value="cv_saliency">Motion &amp; Saliency (Objects/Animals)</option>
+              <option value="cv_chroma">Color / Background Contrast</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="rangeNegSpaceSensitivity">Sensitivity <span class="setting-value" id="valNegSpaceSensitivity">50%</span></label>
+            <input type="range" class="setting-range" id="rangeNegSpaceSensitivity" min="10" max="90" value="50" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="rangeNegSpaceSmoothing">Mask Smoothing <span class="setting-value" id="valNegSpaceSmoothing">45%</span></label>
+            <input type="range" class="setting-range" id="rangeNegSpaceSmoothing" min="0" max="95" value="45" title="Exponential moving average anti-flicker filter" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="rangeNegSpaceBgBrightness">Background Brightness <span class="setting-value" id="valNegSpaceBgBrightness">0</span></label>
+            <input type="range" class="setting-range" id="rangeNegSpaceBgBrightness" min="-50" max="50" value="0" />
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="selectNegSpaceBgCharSet">Background Charset</label>
+            <select class="setting-select" id="selectNegSpaceBgCharSet">
+              <option value="letters" selected>Letters (A–Z, a–z)</option>
+              <option value="numbers">Numbers (0–9)</option>
+              <option value="symbols">Special Symbols &amp; Punctuation</option>
+              <option value="alphanumeric">Alphanumeric Matrix Code</option>
+              <option value="binary">Binary (0 / 1)</option>
+              <option value="standard">Standard Ramp</option>
+              <option value="extended">Extended Ramp</option>
+              <option value="block">Block Shading</option>
+              <option value="braille">Braille Patterns</option>
+            </select>
+          </div>
+
+          <div class="setting-row" id="rowNegSpaceFgCharSet" style="display:none">
+            <label class="setting-label" for="selectNegSpaceFgCharSet">Subject Charset (Hybrid)</label>
+            <select class="setting-select" id="selectNegSpaceFgCharSet">
+              <option value="block" selected>Block Shading</option>
+              <option value="standard">Standard Ramp</option>
+              <option value="extended">Extended Ramp</option>
+              <option value="braille">Braille Patterns</option>
+              <option value="numbers">Numbers (0–9)</option>
+              <option value="letters">Letters (A–Z)</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <label class="setting-label" for="checkNegSpaceAnim">Animated Background</label>
+            <input type="checkbox" id="checkNegSpaceAnim" class="setting-checkbox" />
+          </div>
+
+          <div class="setting-row" id="rowNegSpaceAnimSpeed" style="display:none">
+            <label class="setting-label" for="rangeNegSpaceAnimSpeed">Animation Speed <span class="setting-value" id="valNegSpaceAnimSpeed">1.0x</span></label>
+            <input type="range" class="setting-range" id="rangeNegSpaceAnimSpeed" min="1" max="50" value="10" />
+          </div>
+
+          <div class="setting-row neg-space-status-row">
+            <span class="neg-space-status-badge" id="negSpaceStatusBadge">CV Saliency Active</span>
+            <span class="neg-space-coverage-label" id="negSpaceCoverage">Subject: 0%</span>
           </div>
         </div>
 

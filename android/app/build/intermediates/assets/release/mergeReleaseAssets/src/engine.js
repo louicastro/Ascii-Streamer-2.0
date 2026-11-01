@@ -1,13 +1,18 @@
 // ─── Character Sets ────────────────────────────────────────────────────────
 
 export const CHAR_SETS = {
-  standard:  ' .:-=+*#%@',
-  extended:  ' .\'`^",:;Il!i><~+_-?][}{1)(|\\tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$',
-  block:     ' \u2591\u2592\u2593\u2588',
-  minimal:   ' .oO0',
-  braille:     ' \u2801\u2802\u2803\u2804\u2808\u280a\u280b\u280c\u2810\u2813\u2814\u2818\u281b\u281c\u2820\u2828\u2830\u2838\u2840\u2848\u2850\u2858\u2860\u2868\u2870\u2880\u2881\u2882\u2884\u2888\u2890\u2898\u28a0\u28a8\u28b0\u28b8\u28c0\u28c8\u28d0\u28d8\u28e0\u28e8\u28f0\u28f8',
-  matrix:      ' .:=+*#MW&8%B@$',
-  video2chars: ' .-1+*abcdefghijklmnopqrstuvwxyz<>()/{}[?234567890ABCDEFGHIKLMNOPQRSTUVWXYZ%&@#$',
+  standard:     ' .:-=+*#%@',
+  extended:     ' .\'`^",:;Il!i><~+_-?][}{1)(|\\tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$',
+  block:        ' \u2591\u2592\u2593\u2588',
+  minimal:      ' .oO0',
+  braille:      ' \u2801\u2802\u2803\u2804\u2808\u280a\u280b\u280c\u2810\u2813\u2814\u2818\u281b\u281c\u2820\u2828\u2830\u2838\u2840\u2848\u2850\u2858\u2860\u2868\u2870\u2880\u2881\u2882\u2884\u2888\u2890\u2898\u28a0\u28a8\u28b0\u28b8\u28c0\u28c8\u28d0\u28d8\u28e0\u28e8\u28f0\u28f8',
+  matrix:       ' .:=+*#MW&8%B@$',
+  video2chars:  ' .-1+*abcdefghijklmnopqrstuvwxyz<>()/{}[?234567890ABCDEFGHIKLMNOPQRSTUVWXYZ%&@#$',
+  letters:      ' abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  numbers:      ' 0123456789',
+  symbols:      ' .:+*#%$@&~=^/\\|!?[]{}()<>-',
+  alphanumeric: ' 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.:+*#%@',
+  binary:       ' 01',
 };
 
 // ─── ANSI Colour Tables (shared with exporter) ─────────────────────────────
@@ -406,6 +411,17 @@ uniform vec4  u_cropRect;
 uniform float u_charCount;
 uniform vec3  u_bgColor;
 
+uniform sampler2D u_mask;
+uniform int   u_hasMask;
+uniform int   u_renderMode;
+uniform float u_maskThreshold;
+uniform float u_maskFeather;
+uniform float u_bgBrightness;
+uniform float u_bgContrast;
+uniform float u_bgCharAnimOffset;
+uniform sampler2D u_fgRamp;
+uniform float u_fgCharCount;
+
 vec3 adjustColor(vec3 c) {
   if (u_brightness != 0.0) {
     c += u_brightness;
@@ -438,6 +454,38 @@ void main() {
   vec3 rawRgb     = texture2D(u_video, sampleCenter).rgb;
   vec3 rgb        = adjustColor(rawRgb);
   float lum       = dot(rgb, vec3(0.299, 0.587, 0.114));
+
+  float maskVal = 0.0;
+  if (u_hasMask == 1) {
+    maskVal = texture2D(u_mask, sampleCenter).r;
+  }
+  float isSubject = smoothstep(u_maskThreshold - u_maskFeather, u_maskThreshold + u_maskFeather, maskVal);
+
+  if (u_renderMode == 1) {
+    // Negative Space Mode: Detected subject remains completely empty & black
+    if (isSubject >= 0.5) {
+      gl_FragColor = vec4(u_bgColor, 1.0);
+      return;
+    }
+  } else if (u_renderMode == 2) {
+    // Inverted ASCII Mode: Detected subject rendered in ASCII, background empty
+    if (isSubject < 0.5) {
+      gl_FragColor = vec4(u_bgColor, 1.0);
+      return;
+    }
+  }
+
+  // Background specific adjustments for Negative Space or background regions in Hybrid
+  if (u_renderMode == 1 || (u_renderMode == 3 && isSubject < 0.5)) {
+    if (u_bgBrightness != 0.0) {
+      rgb += u_bgBrightness;
+    }
+    if (u_bgContrast != 0.0) {
+      rgb = (rgb - 0.5) * (1.0 + u_bgContrast) + 0.5;
+    }
+    rgb = clamp(rgb, 0.0, 1.0);
+    lum = dot(rgb, vec3(0.299, 0.587, 0.114));
+  }
 
   if (u_ditherMode == 1) {
     vec2 b = mod(cellIndex, 4.0);
@@ -485,7 +533,14 @@ void main() {
   }
 
   if (charIdx < 0.0) {
-    charIdx = floor(texture2D(u_ramp, vec2(lum, 0.5)).r * 255.0 + 0.5);
+    if (u_renderMode == 3 && isSubject >= 0.5) {
+      charIdx = floor(texture2D(u_fgRamp, vec2(lum, 0.5)).r * 255.0 + 0.5);
+    } else {
+      charIdx = floor(texture2D(u_ramp, vec2(lum, 0.5)).r * 255.0 + 0.5);
+      if (u_bgCharAnimOffset > 0.0 && (u_renderMode == 1 || isSubject < 0.5)) {
+        charIdx = mod(charIdx + u_bgCharAnimOffset, max(1.0, u_charCount));
+      }
+    }
   }
 
   float atlasCols = u_atlasGrid.x;
@@ -613,16 +668,30 @@ export class AsciliWebGLRenderer {
     this._uCharCount       = gl.getUniformLocation(this._program, 'u_charCount');
     this._uBgColor         = gl.getUniformLocation(this._program, 'u_bgColor');
 
+    this._uMask            = gl.getUniformLocation(this._program, 'u_mask');
+    this._uHasMask         = gl.getUniformLocation(this._program, 'u_hasMask');
+    this._uRenderMode      = gl.getUniformLocation(this._program, 'u_renderMode');
+    this._uMaskThreshold   = gl.getUniformLocation(this._program, 'u_maskThreshold');
+    this._uMaskFeather     = gl.getUniformLocation(this._program, 'u_maskFeather');
+    this._uBgBrightness    = gl.getUniformLocation(this._program, 'u_bgBrightness');
+    this._uBgContrast      = gl.getUniformLocation(this._program, 'u_bgContrast');
+    this._uBgCharAnimOffset= gl.getUniformLocation(this._program, 'u_bgCharAnimOffset');
+    this._uFgRamp          = gl.getUniformLocation(this._program, 'u_fgRamp');
+    this._uFgCharCount     = gl.getUniformLocation(this._program, 'u_fgCharCount');
+
     this._texVideo = gl.createTexture();
     this._texAtlas = gl.createTexture();
     this._texRamp  = gl.createTexture();
+    this._texFgRamp= gl.createTexture();
 
     this._setupTexture(this._texVideo, gl.LINEAR);
     this._setupTexture(this._texAtlas, gl.LINEAR);
     this._setupTexture(this._texRamp,  gl.NEAREST);
+    this._setupTexture(this._texFgRamp,gl.NEAREST);
 
     this._lastAtlasVer = -1;
     this._lastRampKey  = '';
+    this._lastFgRampKey= '';
     this._lastVideoW   = 0;
     this._lastVideoH   = 0;
   }
@@ -768,6 +837,56 @@ export class AsciliWebGLRenderer {
     const crop = computeCropBox(vw, vh, config.aspectRatio);
     gl.uniform4f(this._uCropRect, crop.sx / vw, crop.sy / vh, crop.sw / vw, crop.sh / vh);
     gl.uniform1f(this._uCharCount, atlas.charCount || 10);
+
+    // Negative Space / Subject Segmentation uniforms
+    let renderModeInt = 0;
+    const rMode = config.renderMode || config.negSpaceMode || 'none';
+    if (rMode === 'negative_space') renderModeInt = 1;
+    else if (rMode === 'inverted_ascii') renderModeInt = 2;
+    else if (rMode === 'hybrid') renderModeInt = 3;
+
+    gl.uniform1i(this._uRenderMode, renderModeInt);
+
+    let hasMask = 0;
+    if (config.detector && config.detector.enabled && renderModeInt > 0) {
+      const maskTex = config.detector.updateGLTexture(gl);
+      if (maskTex) {
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, maskTex);
+        gl.uniform1i(this._uMask, 3);
+        hasMask = 1;
+      }
+    }
+    gl.uniform1i(this._uHasMask, hasMask);
+
+    const maskThresh = config.maskThreshold ?? config.negSpaceSensitivity ?? 0.5;
+    const maskFeather = config.maskFeather ?? config.negSpaceFeather ?? 0.08;
+    const bgBright = (config.bgBrightness ?? config.negSpaceBgBrightness ?? 0) / 100.0;
+    const bgContr = (config.bgContrast ?? config.negSpaceBgContrast ?? 0) / 100.0;
+    const bgAnimOff = (config.bgCharAnimOffset ?? 0);
+
+    gl.uniform1f(this._uMaskThreshold, maskThresh);
+    gl.uniform1f(this._uMaskFeather, maskFeather);
+    gl.uniform1f(this._uBgBrightness, bgBright);
+    gl.uniform1f(this._uBgContrast, bgContr);
+    gl.uniform1f(this._uBgCharAnimOffset, bgAnimOff);
+
+    if (renderModeInt === 3 && config.fgAtlas) {
+      const fgRampKey = `${config.fgAtlas.version}_${config.invertChars}`;
+      if (this._lastFgRampKey !== fgRampKey) {
+        const fgRampData = config.fgAtlas.getRampData(config.invertChars);
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D, this._texFgRamp);
+        if (this.isWebGL2) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 256, 1, 0, gl.RED, gl.UNSIGNED_BYTE, fgRampData);
+        } else {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, 256, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, fgRampData);
+        }
+        this._lastFgRampKey = fgRampKey;
+      }
+      gl.uniform1i(this._uFgRamp, 4);
+      gl.uniform1f(this._uFgCharCount, config.fgAtlas.charCount || 10);
+    }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this._quadBuf);
     gl.enableVertexAttribArray(this._aPos);
@@ -1073,6 +1192,36 @@ export class Video2CharsCharEngine extends BaseCharacterSetEngine {
   }
 }
 
+export class LettersCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('letters', 'Letters Alphabet Ramp (A-Z, a-z)', CHAR_SETS.letters);
+  }
+}
+
+export class NumbersCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('numbers', 'Numeric Digits Ramp (0-9)', CHAR_SETS.numbers);
+  }
+}
+
+export class SymbolsCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('symbols', 'Special Symbols & Operators', CHAR_SETS.symbols);
+  }
+}
+
+export class AlphanumericCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('alphanumeric', 'Alphanumeric Matrix Code', CHAR_SETS.alphanumeric);
+  }
+}
+
+export class BinaryCharEngine extends BaseCharacterSetEngine {
+  constructor() {
+    super('binary', 'Binary 0/1 Matrix', CHAR_SETS.binary);
+  }
+}
+
 export class CharacterSetEngineRegistry {
   constructor() {
     this._engines = new Map();
@@ -1083,6 +1232,11 @@ export class CharacterSetEngineRegistry {
     this.register(new MatrixCharEngine());
     this.register(new MinimalCharEngine());
     this.register(new Video2CharsCharEngine());
+    this.register(new LettersCharEngine());
+    this.register(new NumbersCharEngine());
+    this.register(new SymbolsCharEngine());
+    this.register(new AlphanumericCharEngine());
+    this.register(new BinaryCharEngine());
   }
 
   register(engine) {
@@ -1296,6 +1450,29 @@ export class Video2CharsModeEngine extends BaseModeEngine {
   }
 }
 
+export class NegativeSpaceModeEngine extends BaseModeEngine {
+  constructor() {
+    super('negative_space', 'Negative Space Silhouette Engine', {
+      colorMode: 'monochrome',
+      defaultCharSet: 'letters',
+      defaultBgColor: '#0a0a0c',
+      defaultMonoColor: '#39ff52',
+    });
+  }
+
+  prepareConfig(userConfig = {}) {
+    return super.prepareConfig({
+      bgColor: userConfig.bgColor || '#0a0a0c',
+      monoColor: userConfig.monoColor || '#39ff52',
+      renderMode: userConfig.renderMode || 'negative_space',
+      contrast: userConfig.contrast ?? 15,
+      brightness: userConfig.brightness ?? 5,
+      ...userConfig,
+      colorMode: userConfig.colorMode || this.colorMode,
+    });
+  }
+}
+
 export class ModeEngineRegistry {
   constructor() {
     this._engines = new Map();
@@ -1305,6 +1482,7 @@ export class ModeEngineRegistry {
     this.register(new BrailleModeEngine());
     this.register(new BlocksModeEngine());
     this.register(new Video2CharsModeEngine());
+    this.register(new NegativeSpaceModeEngine());
   }
 
   register(engine) {
@@ -1341,6 +1519,7 @@ export class AsciliEngine {
     this._sampleCanvas  = document.createElement('canvas');
     this._sampleCtx     = this._sampleCanvas.getContext('2d', { willReadFrequently: true });
     this._atlas         = new AsciliGlyphAtlas();
+    this._fgAtlas       = new AsciliGlyphAtlas();
     this._gpuCanvas     = document.createElement('canvas');
     this._gpuCanvas.width  = 640;
     this._gpuCanvas.height = 360;
@@ -1412,6 +1591,12 @@ export class AsciliEngine {
     this._lastSource = videoEl;
 
     this._atlas.update(charSetEngine.rawString);
+    if (preparedConfig.fgCharSet) {
+      const fgEngine = this.getCharSetEngine(preparedConfig.fgCharSet);
+      this._fgAtlas.update(fgEngine.rawString);
+      preparedConfig.fgAtlas = this._fgAtlas;
+      preparedConfig.fgCharEngine = fgEngine;
+    }
 
     if (targetCanvas instanceof HTMLCanvasElement) {
       if (targetCanvas.width <= 0 || targetCanvas.height <= 0) {
@@ -1633,6 +1818,24 @@ export class AsciliEngine {
           charGrid[idx] = charToUse;
         } else {
           charGrid[idx] = charEngine.getCharIndexForLuminance(lumGrid[idx], config.invertChars);
+        }
+
+        // Negative Space / Segmentation masking in 2D fallback
+        const rMode = config.renderMode || config.negSpaceMode || 'none';
+        if (config.detector && config.detector.enabled && rMode !== 'none') {
+          const uNorm = (c + 0.5) / cols;
+          const vNorm = (r + 0.5) / rows;
+          const maskVal = config.detector.sampleMaskAt(uNorm, vNorm);
+          const thresh = config.maskThreshold ?? config.negSpaceSensitivity ?? 0.5;
+          const isSubject = maskVal >= thresh;
+
+          if (rMode === 'negative_space') {
+            if (isSubject) charGrid[idx] = 0; // Space / empty glyph
+          } else if (rMode === 'inverted_ascii') {
+            if (!isSubject) charGrid[idx] = 0; // Space / empty glyph
+          } else if (rMode === 'hybrid' && config.fgCharEngine && isSubject) {
+            charGrid[idx] = config.fgCharEngine.getCharIndexForLuminance(lumGrid[idx], config.invertChars);
+          }
         }
       }
     }

@@ -29,6 +29,11 @@ CHAR_SETS = {
     "minimal": " .oO0",
     "braille": " \u2801\u2802\u2803\u2804\u2808\u280a\u280b\u280c\u2810\u2813\u2814\u2818\u281b\u281c\u2820\u2828\u2830\u2838\u2840\u2848\u2850\u2858\u2860\u2868\u2870\u2880\u2881\u2882\u2884\u2888\u2890\u28a0\u28c0\u28e0\u28f8",
     "matrix": " .:=+*#MW&8%B@$",
+    "letters": " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "numbers": " 0123456789",
+    "symbols": " .:+*#%$@&~=^/\\|!?[]{}()<>-",
+    "alphanumeric": " 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.:+*#%@",
+    "binary": " 01",
 }
 
 # Structural edge glyphs mapped by dominant gradient orientation
@@ -81,6 +86,13 @@ class EngineConfig:
     char_set: str = "standard"       # key in CHAR_SETS or custom string
     invert_chars: bool = False
     
+    # Negative Space & Segmentation Controls
+    render_mode: str = "normal"      # 'normal', 'negative_space', 'inverted_ascii', 'hybrid'
+    neg_space_sensitivity: float = 0.5 # 0.0 - 1.0 threshold for foreground subject detection
+    neg_space_bg_char_set: str = "symbols"
+    neg_space_fg_char_set: str = "standard"
+    neg_space_bg_brightness: float = 1.0 # 0.0 - 3.0 multiplier for background brightness
+    
     # AI Perception Controls
     enable_edge_detection: bool = True
     edge_threshold: float = 0.18      # 0.0 - 1.0: gradient magnitude threshold for edge glyphs
@@ -102,6 +114,20 @@ class EngineConfig:
 
 
 PRESETS: Dict[str, EngineConfig] = {
+    "negative_space": EngineConfig(
+        cols=120,
+        color_mode="monochrome",
+        render_mode="negative_space",
+        char_set="symbols",
+        neg_space_bg_char_set="symbols",
+        neg_space_fg_char_set="standard",
+        neg_space_sensitivity=0.5,
+        neg_space_bg_brightness=1.2,
+        enable_edge_detection=False,
+        temporal_smoothing=0.35,
+        phosphor_color=(57, 255, 82),
+        contrast=20,
+    ),
     "matrix": EngineConfig(
         cols=140,
         color_mode="monochrome",
@@ -179,6 +205,7 @@ class AsciiAIEngine:
         self._prev_lum: Optional[np.ndarray] = None
         self._prev_chars: Optional[np.ndarray] = None
         self._prev_colors: Optional[np.ndarray] = None
+        self._prev_mask: Optional[np.ndarray] = None
         self._frame_count = 0
 
     def reset_temporal_state(self):
@@ -186,6 +213,7 @@ class AsciiAIEngine:
         self._prev_lum = None
         self._prev_chars = None
         self._prev_colors = None
+        self._prev_mask = None
         self._frame_count = 0
 
     def set_config(self, config: EngineConfig):
@@ -197,9 +225,11 @@ class AsciiAIEngine:
         rgb_frame: np.ndarray,
         target_cols: Optional[int] = None,
         char_aspect_ratio: float = 0.45,
+        mask: Optional[np.ndarray] = None,
     ) -> Tuple[List[str], np.ndarray]:
         """
         Process a single RGB image/frame (height, width, 3) uint8.
+        Supports Negative Space, Inverted ASCII, and Hybrid rendering modes.
         Returns:
             lines: list of strings (ASCII characters)
             colors: np.ndarray of shape (rows, cols, 3) with RGB color per cell
@@ -319,9 +349,89 @@ class AsciiAIEngine:
         else:
             char_matrix = np.array(list(char_ramp))[char_indices]
 
+        # 8. Negative Space & Subject Segmentation Handling
+        colors = np.clip(adjusted_rgb, 0, 255).astype(np.uint8)
+        render_mode = getattr(cfg, "render_mode", "normal")
+        if render_mode != "normal" or mask is not None:
+            if mask is not None:
+                if mask.shape == (rows, cols):
+                    subj_mask = mask.astype(bool)
+                else:
+                    my_idx = np.clip((np.arange(rows) * (mask.shape[0] / rows)).astype(int), 0, mask.shape[0] - 1)
+                    mx_idx = np.clip((np.arange(cols) * (mask.shape[1] / cols)).astype(int), 0, mask.shape[1] - 1)
+                    subj_mask = (mask[np.ix_(my_idx, mx_idx)] >= 0.5)
+            else:
+                # Automatic On-Device Subject Segmentation:
+                # 1. Border background reference
+                border_pixels = np.concatenate([
+                    adjusted_rgb[0, :, :],
+                    adjusted_rgb[-1, :, :],
+                    adjusted_rgb[:, 0, :],
+                    adjusted_rgb[:, -1, :],
+                ], axis=0)
+                bg_ref = np.median(border_pixels, axis=0)
+
+                # 2. Color Euclidean distance from background
+                color_diff = np.linalg.norm(adjusted_rgb - bg_ref, axis=-1) / 441.67  # normalized 0-1
+
+                # 3. Center spatial prior (subjects are generally centered)
+                yy, xx = np.mgrid[0:rows, 0:cols]
+                cy, cx = rows / 2.0, cols / 2.0
+                dist_norm = np.sqrt(((xx - cx) / cx)**2 + ((yy - cy) / cy)**2)
+                center_prior = np.clip(1.0 - 0.65 * dist_norm, 0.0, 1.0)
+
+                # 4. YCbCr Chrominance skin detection boost
+                r_c = adjusted_rgb[..., 0]
+                g_c = adjusted_rgb[..., 1]
+                b_c = adjusted_rgb[..., 2]
+                cb = -0.168736 * r_c - 0.331264 * g_c + 0.5 * b_c + 128.0
+                cr = 0.5 * r_c - 0.418688 * g_c - 0.081312 * b_c + 128.0
+                skin_mask = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173)
+
+                raw_score = color_diff * 0.6 + center_prior * 0.35 + skin_mask.astype(float) * 0.25
+                threshold = 0.60 - (cfg.neg_space_sensitivity * 0.35)
+
+                # Temporal smoothing of mask
+                alpha_m = float(np.clip(1.0 - cfg.temporal_smoothing, 0.05, 1.0))
+                if self._prev_mask is not None and self._prev_mask.shape == raw_score.shape:
+                    smoothed_score = raw_score * alpha_m + self._prev_mask * (1.0 - alpha_m)
+                else:
+                    smoothed_score = raw_score
+                self._prev_mask = smoothed_score.copy()
+                subj_mask = smoothed_score >= threshold
+
+            # Apply Render Modes
+            if render_mode == "negative_space":
+                # Detected person / subject is completely empty
+                char_matrix[subj_mask] = " "
+                colors[subj_mask] = [0, 0, 0]
+                # Background can have custom charset & brightness
+                bg_ramp = CHAR_SETS.get(cfg.neg_space_bg_char_set, cfg.neg_space_bg_char_set)
+                if bg_ramp and cfg.neg_space_bg_char_set != cfg.char_set:
+                    bg_indices = np.clip(np.round(lum * (len(bg_ramp) - 1)).astype(int), 0, len(bg_ramp) - 1)
+                    bg_chars = np.array(list(bg_ramp))[bg_indices]
+                    char_matrix[~subj_mask] = bg_chars[~subj_mask]
+                if cfg.neg_space_bg_brightness != 1.0:
+                    colors[~subj_mask] = np.clip(colors[~subj_mask].astype(float) * cfg.neg_space_bg_brightness, 0, 255).astype(np.uint8)
+
+            elif render_mode == "inverted_ascii":
+                # Detected subject has ASCII, surrounding background is empty
+                char_matrix[~subj_mask] = " "
+                colors[~subj_mask] = [0, 0, 0]
+
+            elif render_mode == "hybrid":
+                # Foreground uses fg_char_set, background uses bg_char_set
+                fg_ramp = CHAR_SETS.get(cfg.neg_space_fg_char_set, cfg.neg_space_fg_char_set) or CHAR_SETS["standard"]
+                bg_ramp = CHAR_SETS.get(cfg.neg_space_bg_char_set, cfg.neg_space_bg_char_set) or CHAR_SETS["symbols"]
+                fg_indices = np.clip(np.round(lum * (len(fg_ramp) - 1)).astype(int), 0, len(fg_ramp) - 1)
+                bg_indices = np.clip(np.round(lum * (len(bg_ramp) - 1)).astype(int), 0, len(bg_ramp) - 1)
+                char_matrix[subj_mask] = np.array(list(fg_ramp))[fg_indices][subj_mask]
+                char_matrix[~subj_mask] = np.array(list(bg_ramp))[bg_indices][~subj_mask]
+                if cfg.neg_space_bg_brightness != 1.0:
+                    colors[~subj_mask] = np.clip(colors[~subj_mask].astype(float) * cfg.neg_space_bg_brightness, 0, 255).astype(np.uint8)
+
         # Convert matrix into list of line strings
         lines = ["".join(row) for row in char_matrix]
-        colors = np.clip(adjusted_rgb, 0, 255).astype(np.uint8)
 
         self._frame_count += 1
         return lines, colors

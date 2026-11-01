@@ -12,6 +12,7 @@ const STATIC_ASSETS = [
   './src/website-upgrade.css',
   './src/index.css',
   './src/app.js',
+  './src/segmentation.js',
   './src/engine.js',
   './src/exporter.js',
   './src/gif-encoder.js',

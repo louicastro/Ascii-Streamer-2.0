@@ -1821,3 +1821,61 @@ kbd {
   .settings-section { padding-right: 10px; padding-left: 10px; }
   .source-preview { max-width: 28vw; }
 }
+
+/* ─── Negative Space & Subject Segmentation ────────────────────────────────── */
+
+#sectionNegativeSpace {
+  border: 1px solid rgba(57, 255, 82, 0.25);
+  border-radius: 6px;
+  background: rgba(8, 16, 10, 0.6);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+#sectionNegativeSpace .section-label {
+  color: #39ff52;
+  letter-spacing: 1px;
+}
+
+.neg-space-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+
+.neg-space-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(57, 255, 82, 0.15);
+  color: #39ff52;
+  border: 1px solid rgba(57, 255, 82, 0.3);
+}
+
+.neg-space-status-badge.neural {
+  background: rgba(0, 245, 255, 0.15);
+  color: #00f5ff;
+  border-color: rgba(0, 245, 255, 0.35);
+}
+
+.neg-space-status-badge.offline {
+  background: rgba(255, 187, 0, 0.15);
+  color: #ffbb00;
+  border-color: rgba(255, 187, 0, 0.35);
+}
+
+.neg-space-coverage-label {
+  font-size: 10px;
+  color: #889988;
+  font-family: inherit;
+}
+

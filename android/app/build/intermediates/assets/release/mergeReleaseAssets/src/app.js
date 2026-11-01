@@ -1,16 +1,18 @@
 import { AsciliEngine, CHAR_SETS } from './engine.js';
 import { AsciliVideoExporter, AsciliSrtExporter, AsciliLiveRecorder, AsciliGifRecorder, AsciliGifVideoExporter, AsciliHtmlExporter, renderFrameToCanvas, computeFontForResolution, CHAR_W_FACTOR, setSharedEngine, getCandidateMimeTypes, RESOLUTIONS } from './exporter.js';
 import { AsciliGifEncoder } from './gif-encoder.js';
+import { AsciliSubjectDetector } from './segmentation.js';
 
 // ─── Presets ────────────────────────────────────────────────────────────────
 
 const PRESETS = {
-  classic:    { colorMode:'monochrome', charSet:'standard', invertChars:true,  cols:80,  fontSize:10, fps:60, brightness:0,  contrast:10,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.18, temporalSmoothing:0.35, adaptiveContrast:true },
-  matrix:     { colorMode:'monochrome', charSet:'extended', invertChars:false, cols:100, fontSize:8,  fps:60, brightness:5,  contrast:20,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.15, temporalSmoothing:0.40, adaptiveContrast:true },
-  truecolor:  { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:80,  fontSize:10, fps:60, brightness:0,  contrast:0,   gamma:0,  saturation:20,  enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.30, adaptiveContrast:true },
-  braille:    { colorMode:'grayscale',  charSet:'braille',  invertChars:false, cols:120, fontSize:10, fps:60, brightness:5,  contrast:15,  gamma:0,  saturation:0,   enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.25, adaptiveContrast:true },
-  blocks:     { colorMode:'ansi256',    charSet:'block',    invertChars:false, cols:80,  fontSize:12, fps:60, brightness:0,  contrast:5,   gamma:0,  saturation:10,  enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.20, adaptiveContrast:true },
-  video2chars:{ colorMode:'truecolor',  charSet:'video2chars', invertChars:false, cols:100, fontSize:10, fps:60, brightness:0,  contrast:15,  gamma:0,  saturation:15,  enableEdgeDetection:false, edgeThreshold:0.16, temporalSmoothing:0.25, adaptiveContrast:true, bgColor:'#0a0a0c' },
+  classic:       { colorMode:'monochrome', charSet:'standard', invertChars:true,  cols:80,  fontSize:10, fps:60, brightness:0,  contrast:10,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.18, temporalSmoothing:0.35, adaptiveContrast:true },
+  matrix:        { colorMode:'monochrome', charSet:'extended', invertChars:false, cols:100, fontSize:8,  fps:60, brightness:5,  contrast:20,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.15, temporalSmoothing:0.40, adaptiveContrast:true },
+  truecolor:     { colorMode:'truecolor',  charSet:'standard', invertChars:false, cols:80,  fontSize:10, fps:60, brightness:0,  contrast:0,   gamma:0,  saturation:20,  enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.30, adaptiveContrast:true },
+  braille:       { colorMode:'grayscale',  charSet:'braille',  invertChars:false, cols:120, fontSize:10, fps:60, brightness:5,  contrast:15,  gamma:0,  saturation:0,   enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.25, adaptiveContrast:true },
+  blocks:        { colorMode:'ansi256',    charSet:'block',    invertChars:false, cols:80,  fontSize:12, fps:60, brightness:0,  contrast:5,   gamma:0,  saturation:10,  enableEdgeDetection:false, edgeThreshold:0.20, temporalSmoothing:0.20, adaptiveContrast:true },
+  video2chars:   { colorMode:'truecolor',  charSet:'video2chars', invertChars:false, cols:100, fontSize:10, fps:60, brightness:0,  contrast:15,  gamma:0,  saturation:15,  enableEdgeDetection:false, edgeThreshold:0.16, temporalSmoothing:0.25, adaptiveContrast:true, bgColor:'#0a0a0c' },
+  negative_space:{ colorMode:'monochrome', charSet:'letters',  invertChars:false, cols:90,  fontSize:10, fps:60, brightness:5,  contrast:15,  gamma:0,  saturation:0,   enableEdgeDetection:true,  edgeThreshold:0.16, temporalSmoothing:0.35, adaptiveContrast:true, negSpaceMode:'negative_space', negSpaceSensitivity:0.50, negSpaceSmoothing:0.45, negSpaceBgBrightness:0, negSpaceBgContrast:0, negSpaceBgCharSet:'letters', negSpaceFgCharSet:'block', negSpaceAnim:false, negSpaceAnimSpeed:10, negSpaceMethod:'auto' },
 };
 
 // ─── DOM Refs ────────────────────────────────────────────────────────────────
@@ -131,6 +133,26 @@ const valGamma          = $('valGamma');
 const rangeSaturation   = $('rangeSaturation');
 const valSaturation     = $('valSaturation');
 
+// Negative Space & Segmentation DOM refs
+const selectNegSpaceMode        = $('selectNegSpaceMode');
+const checkSubjectDetection     = $('checkSubjectDetection');
+const selectNegSpaceMethod      = $('selectNegSpaceMethod');
+const rangeNegSpaceSensitivity  = $('rangeNegSpaceSensitivity');
+const valNegSpaceSensitivity    = $('valNegSpaceSensitivity');
+const rangeNegSpaceSmoothing    = $('rangeNegSpaceSmoothing');
+const valNegSpaceSmoothing      = $('valNegSpaceSmoothing');
+const rangeNegSpaceBgBrightness = $('rangeNegSpaceBgBrightness');
+const valNegSpaceBgBrightness   = $('valNegSpaceBgBrightness');
+const selectNegSpaceBgCharSet   = $('selectNegSpaceBgCharSet');
+const rowNegSpaceFgCharSet      = $('rowNegSpaceFgCharSet');
+const selectNegSpaceFgCharSet   = $('selectNegSpaceFgCharSet');
+const checkNegSpaceAnim         = $('checkNegSpaceAnim');
+const rowNegSpaceAnimSpeed      = $('rowNegSpaceAnimSpeed');
+const rangeNegSpaceAnimSpeed    = $('rangeNegSpaceAnimSpeed');
+const valNegSpaceAnimSpeed      = $('valNegSpaceAnimSpeed');
+const negSpaceStatusBadge       = $('negSpaceStatusBadge');
+const negSpaceCoverage          = $('negSpaceCoverage');
+
 // Stats
 const statFps       = $('statFps');
 const statLatency   = $('statLatency');
@@ -191,12 +213,24 @@ const cfg = {
   edgeThreshold:       0.16,
   temporalSmoothing:   0.35,
   adaptiveContrast:    true,
+  // Negative Space & Subject Segmentation parameters
+  negSpaceMode:         'none', // 'none' | 'negative_space' | 'inverted_ascii' | 'hybrid'
+  negSpaceSensitivity:  0.50,
+  negSpaceSmoothing:    0.45,
+  negSpaceBgBrightness: 0,
+  negSpaceBgContrast:   0,
+  negSpaceBgCharSet:    'letters',
+  negSpaceFgCharSet:    'block',
+  negSpaceAnim:         false,
+  negSpaceAnimSpeed:    10,
+  negSpaceMethod:       'auto',
 };
 
 const engine = new AsciliEngine();
+const detector = new AsciliSubjectDetector();
 setSharedEngine(engine);
 if (typeof window !== 'undefined') {
-  window.__ascili = { engine, state, cfg, AsciliVideoExporter, AsciliLiveRecorder, get cvExporter() { return cvExporter; } };
+  window.__ascili = { engine, detector, state, cfg, AsciliVideoExporter, AsciliLiveRecorder, get cvExporter() { return cvExporter; } };
 }
 
 // ─── Auto-Fit Container Layout (Fixed, Centered, Smooth Scaling) ─────────────
@@ -336,6 +370,59 @@ function readConfig() {
   // Show/hide color swatches based on monochrome mode
   if (colorSwatchRow) colorSwatchRow.style.display = cfg.colorMode === 'monochrome' ? 'block' : 'none';
 
+  // Negative Space & Subject Segmentation controls
+  if (selectNegSpaceMode) cfg.negSpaceMode = selectNegSpaceMode.value;
+  if (checkSubjectDetection) {
+    const shouldEnable = checkSubjectDetection.checked || (cfg.negSpaceMode && cfg.negSpaceMode !== 'none');
+    detector.enabled = shouldEnable;
+    if (cfg.negSpaceMode && cfg.negSpaceMode !== 'none' && !checkSubjectDetection.checked) {
+      checkSubjectDetection.checked = true;
+    }
+  } else {
+    detector.enabled = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+  }
+
+  if (selectNegSpaceMethod) {
+    cfg.negSpaceMethod = selectNegSpaceMethod.value;
+    detector.mode = cfg.negSpaceMethod;
+  }
+  if (rangeNegSpaceSensitivity) {
+    cfg.negSpaceSensitivity = parseInt(rangeNegSpaceSensitivity.value, 10) / 100.0;
+    detector.sensitivity = cfg.negSpaceSensitivity;
+    if (valNegSpaceSensitivity) valNegSpaceSensitivity.textContent = `${rangeNegSpaceSensitivity.value}%`;
+  }
+  if (rangeNegSpaceSmoothing) {
+    cfg.negSpaceSmoothing = parseInt(rangeNegSpaceSmoothing.value, 10) / 100.0;
+    detector.smoothing = cfg.negSpaceSmoothing;
+    if (valNegSpaceSmoothing) valNegSpaceSmoothing.textContent = `${rangeNegSpaceSmoothing.value}%`;
+  }
+  if (rangeNegSpaceBgBrightness) {
+    cfg.negSpaceBgBrightness = parseInt(rangeNegSpaceBgBrightness.value, 10);
+    if (valNegSpaceBgBrightness) valNegSpaceBgBrightness.textContent = String(cfg.negSpaceBgBrightness);
+  }
+  if (selectNegSpaceBgCharSet) {
+    cfg.negSpaceBgCharSet = selectNegSpaceBgCharSet.value;
+    if (cfg.negSpaceMode === 'negative_space') {
+      cfg.charSet = CHAR_SETS[cfg.negSpaceBgCharSet] || CHAR_SETS.letters;
+    }
+  }
+  if (rowNegSpaceFgCharSet) {
+    rowNegSpaceFgCharSet.style.display = cfg.negSpaceMode === 'hybrid' ? 'block' : 'none';
+  }
+  if (selectNegSpaceFgCharSet) {
+    cfg.negSpaceFgCharSet = selectNegSpaceFgCharSet.value;
+  }
+  if (checkNegSpaceAnim) {
+    cfg.negSpaceAnim = checkNegSpaceAnim.checked;
+  }
+  if (rowNegSpaceAnimSpeed) {
+    rowNegSpaceAnimSpeed.style.display = cfg.negSpaceAnim ? 'block' : 'none';
+  }
+  if (rangeNegSpaceAnimSpeed) {
+    cfg.negSpaceAnimSpeed = parseInt(rangeNegSpaceAnimSpeed.value, 10) / 10.0;
+    if (valNegSpaceAnimSpeed) valNegSpaceAnimSpeed.textContent = `${cfg.negSpaceAnimSpeed.toFixed(1)}x`;
+  }
+
   if (statMode && cfg.colorMode) {
     statMode.textContent = cfg.colorMode.toUpperCase();
   }
@@ -419,6 +506,33 @@ function applyPreset(name) {
   if (checkTemporal) checkTemporal.checked = (p.temporalSmoothing ?? 0.35) > 0;
   if (checkAdaptiveContrast) checkAdaptiveContrast.checked = p.adaptiveContrast ?? true;
 
+  // Negative Space preset values
+  if (p.negSpaceMode !== undefined) {
+    if (selectNegSpaceMode) selectNegSpaceMode.value = p.negSpaceMode;
+    if (checkSubjectDetection) checkSubjectDetection.checked = p.negSpaceMode !== 'none';
+  } else {
+    if (selectNegSpaceMode) selectNegSpaceMode.value = 'none';
+    if (checkSubjectDetection) checkSubjectDetection.checked = false;
+  }
+  if (p.negSpaceSensitivity !== undefined && rangeNegSpaceSensitivity) {
+    rangeNegSpaceSensitivity.value = Math.round(p.negSpaceSensitivity * 100);
+  }
+  if (p.negSpaceSmoothing !== undefined && rangeNegSpaceSmoothing) {
+    rangeNegSpaceSmoothing.value = Math.round(p.negSpaceSmoothing * 100);
+  }
+  if (p.negSpaceBgBrightness !== undefined && rangeNegSpaceBgBrightness) {
+    rangeNegSpaceBgBrightness.value = p.negSpaceBgBrightness;
+  }
+  if (p.negSpaceBgCharSet && selectNegSpaceBgCharSet) {
+    selectNegSpaceBgCharSet.value = p.negSpaceBgCharSet;
+  }
+  if (p.negSpaceFgCharSet && selectNegSpaceFgCharSet) {
+    selectNegSpaceFgCharSet.value = p.negSpaceFgCharSet;
+  }
+  if (p.negSpaceAnim !== undefined && checkNegSpaceAnim) {
+    checkNegSpaceAnim.checked = p.negSpaceAnim;
+  }
+
   cfg.mode = name;
   presetBtns.forEach(b => b.classList.toggle('active', b.dataset.preset === name));
   readConfig();
@@ -473,6 +587,7 @@ chkMirror?.addEventListener('change', () => {
   readConfig();
   showToast(cfg.mirror ? 'Mirror feed: ON' : 'Mirror feed: OFF');
 });
+
 btnMirror?.addEventListener('click', () => {
   if (chkMirror) {
     chkMirror.checked = !chkMirror.checked;
@@ -482,6 +597,33 @@ btnMirror?.addEventListener('click', () => {
   readConfig();
   showToast(cfg.mirror ? 'Mirror feed: ON' : 'Mirror feed: OFF');
 });
+
+// Negative Space & Subject Detection listeners
+selectNegSpaceMode?.addEventListener('change', () => {
+  readConfig();
+  showToast('Effect: ' + (selectNegSpaceMode.selectedOptions[0]?.text || selectNegSpaceMode.value));
+});
+checkSubjectDetection?.addEventListener('change', () => {
+  readConfig();
+  showToast(detector.enabled ? 'Subject Detection: ON' : 'Subject Detection: OFF');
+});
+selectNegSpaceMethod?.addEventListener('change', () => {
+  readConfig();
+  showToast('Model: ' + (selectNegSpaceMethod.selectedOptions[0]?.text || selectNegSpaceMethod.value));
+});
+rangeNegSpaceSensitivity?.addEventListener('input', () => readConfig());
+rangeNegSpaceSmoothing?.addEventListener('input', () => readConfig());
+rangeNegSpaceBgBrightness?.addEventListener('input', () => readConfig());
+selectNegSpaceBgCharSet?.addEventListener('change', () => {
+  readConfig();
+  showToast('BG Charset: ' + selectNegSpaceBgCharSet.value);
+});
+selectNegSpaceFgCharSet?.addEventListener('change', () => readConfig());
+checkNegSpaceAnim?.addEventListener('change', () => {
+  readConfig();
+  showToast(cfg.negSpaceAnim ? 'Animated Background: ON' : 'Animated Background: OFF');
+});
+rangeNegSpaceAnimSpeed?.addEventListener('input', () => readConfig());
 
 // ─── Scanlines Toggle ────────────────────────────────────────────────────────
 
@@ -803,6 +945,36 @@ function renderLoop(ts) {
   // Guarantee canvas dimensions and aspect ratio are established before render call
   updateAsciiLayout(expectedRows, targetCols);
 
+  // Execute real-time subject segmentation if negative space mode or detector is active
+  const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+  if (isNegSpaceActive || detector.enabled) {
+    detector.processFrame(sourceVideo);
+
+    // Update status badge & coverage telemetry
+    if (negSpaceStatusBadge) {
+      if (detector.modelStatus === 'ready') {
+        negSpaceStatusBadge.textContent = 'Neural Human Active';
+        negSpaceStatusBadge.className = 'neg-space-status-badge neural';
+      } else if (detector.modelStatus === 'offline_fallback') {
+        negSpaceStatusBadge.textContent = 'CV Saliency Active (Offline)';
+        negSpaceStatusBadge.className = 'neg-space-status-badge offline';
+      } else {
+        negSpaceStatusBadge.textContent = 'CV Saliency Active';
+        negSpaceStatusBadge.className = 'neg-space-status-badge';
+      }
+    }
+    if (negSpaceCoverage) {
+      negSpaceCoverage.textContent = `Subject: ${(detector.coverageRatio * 100).toFixed(0)}%`;
+    }
+  }
+
+  // Handle animated background transitions
+  let bgCharAnimOffset = 0;
+  if (cfg.negSpaceAnim && isNegSpaceActive) {
+    state.bgAnimPhase = ((state.bgAnimPhase || 0) + (cfg.negSpaceAnimSpeed || 1.0) * 0.15) % 1000;
+    bgCharAnimOffset = Math.floor(state.bgAnimPhase);
+  }
+
   const t0 = performance.now();
   const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
     ...cfg,
@@ -810,6 +982,14 @@ function renderLoop(ts) {
     rows: expectedRows,
     monoColor: state.monoColor,
     scanlines: state.scanlinesOn,
+    detector: (isNegSpaceActive || detector.enabled) ? detector : null,
+    renderMode: cfg.negSpaceMode,
+    maskThreshold: cfg.negSpaceSensitivity,
+    maskFeather: 0.08,
+    bgBrightness: cfg.negSpaceBgBrightness,
+    bgContrast: cfg.negSpaceBgContrast,
+    bgCharAnimOffset: bgCharAnimOffset,
+    fgCharSet: cfg.negSpaceFgCharSet,
   });
   if (dims.rendered === false) {
     state.consecutiveFailedFrames = (state.consecutiveFailedFrames || 0) + 1;
@@ -969,6 +1149,11 @@ function isVideoFile(file) {
   return Boolean(file && (file.type?.startsWith('video/') || VIDEO_FILE_EXTENSIONS.test(file.name || '')));
 }
 
+const IMAGE_FILE_EXTENSIONS = /\.(?:png|jpe?g|webp|gif|bmp|svg)$/i;
+function isImageFile(file) {
+  return Boolean(file && (file.type?.startsWith('image/') || IMAGE_FILE_EXTENSIONS.test(file.name || '')));
+}
+
 function filePlaybackError() {
   const code = sourceVideo.error?.code;
   if (code === 3 || code === 4) {
@@ -979,8 +1164,47 @@ function filePlaybackError() {
 }
 
 function attachFile(file) {
+  if (isImageFile(file)) {
+    stopCurrentSource();
+    const loadToken = ++state.sourceLoadToken;
+    state.sourceType  = 'file';
+    state.currentFile = file;
+    const url = URL.createObjectURL(file);
+    state.currentObjectUrl = url;
+
+    const img = new Image();
+    img.onload = () => {
+      if (loadToken !== state.sourceLoadToken) return;
+      const cvs = document.createElement('canvas');
+      cvs.width = img.naturalWidth || img.width || 640;
+      cvs.height = img.naturalHeight || img.height || 480;
+      const ctx = cvs.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      const stream = cvs.captureStream ? cvs.captureStream(30) : null;
+      if (stream) {
+        sourceVideo.src = '';
+        sourceVideo.srcObject = stream;
+        sourceVideo.muted = true;
+        sourceVideo.play().then(() => {
+          waitingOverlay.classList.add('hidden');
+          sourcePreview.classList.add('visible');
+          sourceLabel.textContent = 'IMAGE';
+          if (!state.running) startRenderLoop();
+        }).catch(() => {});
+      } else {
+        waitingOverlay.classList.add('hidden');
+        sourcePreview.classList.add('visible');
+        sourceLabel.textContent = 'IMAGE';
+        if (!state.running) startRenderLoop();
+      }
+    };
+    img.src = url;
+    return;
+  }
+
   if (!isVideoFile(file)) {
-    showToast('Choose a video file such as MP4 or WebM.');
+    showToast('Choose a supported video (MP4/WebM) or image (PNG/JPG/WebP) file.');
     return;
   }
   stopCurrentSource();
@@ -1123,12 +1347,12 @@ asciiContainer.addEventListener('drop', e => {
   dropOverlay.classList.remove('visible');
 
   const file = e.dataTransfer.files[0];
-  if (isVideoFile(file)) {
+  if (isVideoFile(file) || isImageFile(file)) {
     attachFile(file);
     btnFile.classList.add('active');
-    showToast('Loading video: ' + file.name);
+    showToast(`Loading ${isImageFile(file) ? 'image' : 'video'}: ${file.name}`);
   } else {
-    showToast('Please drop a video file');
+    showToast('Please drop a video or image file');
   }
 });
 
@@ -1237,11 +1461,13 @@ btnFile.addEventListener('click', () => fileInput.click());
 
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
-  if (isVideoFile(file)) {
+  if (isVideoFile(file) || isImageFile(file)) {
     attachFile(file);
     btnFile.classList.add('active');
-    showToast('Loading video: ' + file.name);
-  } else if (file) showToast('Choose a supported video file such as MP4 or WebM.');
+    showToast(`Loading ${isImageFile(file) ? 'image' : 'video'}: ${file.name}`);
+  } else if (file) {
+    showToast('Choose a supported video (MP4/WebM) or image (PNG/JPG/WebP) file.');
+  }
   fileInput.value = '';
 });
 
@@ -3048,6 +3274,17 @@ document.addEventListener('keydown', e => {
     case '4': applyPreset('braille');    break;
     case '5': applyPreset('blocks');     break;
     case '6': applyPreset('video2chars'); break;
+    case '7': applyPreset('negative_space'); break;
+    case 'n': case 'N':
+      e.preventDefault();
+      if (cfg.negSpaceMode === 'negative_space') {
+        if (selectNegSpaceMode) selectNegSpaceMode.value = 'none';
+      } else {
+        if (selectNegSpaceMode) selectNegSpaceMode.value = 'negative_space';
+      }
+      readConfig();
+      showToast(`Negative Space: ${cfg.negSpaceMode === 'none' ? 'OFF' : 'ACTIVE'}`);
+      break;
   }
 });
 

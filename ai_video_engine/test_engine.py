@@ -50,6 +50,20 @@ def test_core_engine():
     print("    ✓ Edge-aware structural analysis passed")
     print("    ✓ Text, ANSI, HTML exporters passed")
 
+    # Test Negative Space Mode
+    print("    Testing Negative Space Mode...")
+    neg_engine = AsciiAIEngine(PRESETS["negative_space"])
+    # Synthetic frame: centered person-like blob
+    person_frame = np.zeros((480, 640, 3), dtype=np.uint8) + 30  # dark background
+    person_frame[120:360, 240:400] = [210, 160, 120]  # skin-tone person rectangle in center
+    lines_neg, colors_neg = neg_engine.process_frame(person_frame, target_cols=80)
+    assert len(lines_neg) > 0, "Negative space lines empty"
+    # Subject center should be empty spaces
+    mid_r = len(lines_neg) // 2
+    mid_c = len(lines_neg[0]) // 2
+    assert lines_neg[mid_r][mid_c] == " ", f"Expected empty space in silhouette center, got '{lines_neg[mid_r][mid_c]}'"
+    print("    ✓ Negative space subject silhouette masking verified")
+
 
 def test_video_conversion():
     print("\n--> [2/3] Testing Full Video Conversion Pipeline...")
