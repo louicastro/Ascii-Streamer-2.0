@@ -1,4 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap');
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  src: url('../fonts/jetbrains-mono-400.woff2') format('woff2');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  src: url('../fonts/jetbrains-mono-700.woff2') format('woff2');
+  font-display: swap;
+}
 @import "tailwindcss";
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";

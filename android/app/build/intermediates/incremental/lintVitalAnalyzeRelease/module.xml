@@ -1,0 +1,18 @@
+<lint-module
+    format="1"
+    dir="/home/loui/Pictures/Ascii-Streamer-2.0-main/android/app"
+    name=":app"
+    type="APP"
+    maven="ASCILI:app:unspecified"
+    agpVersion="8.7.3"
+    buildFolder="build"
+    bootClassPath="/home/loui/.android-build/android-sdk/platforms/android-35/android.jar:/home/loui/.android-build/android-sdk/build-tools/34.0.0/core-lambda-stubs.jar"
+    javaSourceLevel="17"
+    compileTarget="android-35">
+  <lintOptions
+      abortOnError="true"
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="release"/>
+</lint-module>

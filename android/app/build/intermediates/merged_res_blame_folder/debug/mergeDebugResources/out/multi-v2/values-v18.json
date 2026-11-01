@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.asciistreamer.ascili.app-mergeDebugResources-31:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "/home/loui/.gradle/caches/8.9/transforms/2e5dede616097980bb091ccafda52a7d/transformed/appcompat-1.7.0/res/values-v18/values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        }
+    ]
+}

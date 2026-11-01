@@ -14,6 +14,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-10.5.2-orange.svg)](https://pnpm.io/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
 [![PWA](https://img.shields.io/badge/PWA-100%25%20Offline-7928CA.svg)](#pwa--100-offline-support)
+[![Android](https://img.shields.io/badge/Android-APK%20%26%20AAB%20Ready-3DDC84.svg?logo=android&logoColor=white)](android/README.md)
 [![YouTube](https://img.shields.io/badge/YouTube-.ytt%20Subtitles-FF0000.svg)](#youtube-timed-text-ytt-animation-guide)
 
 ---

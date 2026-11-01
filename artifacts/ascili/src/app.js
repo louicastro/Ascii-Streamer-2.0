@@ -210,12 +210,15 @@ function updateAsciiLayout(rows, cols, force = false) {
   lastLayoutRows = rows;
   lastLayoutCols = cols;
 
-  const cw = asciiContainer.clientWidth;
-  const ch = asciiContainer.clientHeight;
-  if (!cw || !ch) return;
+  let cw = asciiContainer ? asciiContainer.clientWidth : 0;
+  let ch = asciiContainer ? asciiContainer.clientHeight : 0;
+  if (!cw || !ch) {
+    cw = (typeof window !== 'undefined' ? window.innerWidth : 360) || 360;
+    ch = Math.max(200, (typeof window !== 'undefined' ? window.innerHeight : 640) - 140);
+  }
 
-  const availW = Math.max(40, cw - 16);
-  const availH = Math.max(40, ch - 16);
+  const availW = Math.max(40, cw - 8);
+  const availH = Math.max(40, ch - 8);
 
   // Character cell aspect ratio: Courier New character width / height ≈ 0.601
   const gridAspect = (cols * 0.601) / rows;
@@ -797,6 +800,9 @@ function renderLoop(ts) {
   const targetCols = Math.max(20, Math.floor(cfg.cols * state.qualityScale));
   const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
 
+  // Guarantee canvas dimensions and aspect ratio are established before render call
+  updateAsciiLayout(expectedRows, targetCols);
+
   const t0 = performance.now();
   const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
     ...cfg,
@@ -1139,18 +1145,40 @@ async function startWebcam(facingMode = state.facingMode || 'user') {
       state.stream.getTracks().forEach(t => t.stop());
     }
     let stream;
+    const facingConstraint = { ideal: state.facingMode };
+    // Request with audio first so video recordings include microphone sound;
+    // gracefully fall back to video-only if audio is unavailable or denied.
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: state.facingMode },
+          facingMode: facingConstraint,
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
-        audio: false,
+        audio: true,
       });
-    } catch (idealErr) {
-      console.warn('[ASCILI] Ideal camera constraints failed, trying basic video:', idealErr);
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (micOrIdealErr) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingConstraint,
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+      } catch (idealErr) {
+        console.warn('[ASCILI] Ideal camera constraints failed, trying facingMode only:', idealErr);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facingConstraint },
+            audio: false,
+          });
+        } catch (facingErr) {
+          console.warn('[ASCILI] Facing constraints failed, trying generic video:', facingErr);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+      }
     }
 
     attachStream(stream, 'webcam');
@@ -1159,8 +1187,9 @@ async function startWebcam(facingMode = state.facingMode || 'user') {
     if (btnFlipCameraCanvas) btnFlipCameraCanvas.style.display = 'inline-flex';
     showToast(`Camera active (${state.facingMode === 'user' ? 'Front' : 'Rear'})`);
   } catch (err) {
-    if (err.name === 'NotAllowedError') {
-      showToast('Camera access denied. Please allow camera permissions in browser settings.');
+    console.error('[ASCILI] Camera activation failed:', err);
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      showToast('Camera permission required. Please allow camera access.');
     } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
       showToast('No camera found on this device.');
     } else {
@@ -1190,7 +1219,12 @@ btnScreen.addEventListener('click', async () => {
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    }
     attachStream(stream, 'screen');
     btnScreen.classList.add('active');
     stream.getVideoTracks()[0].addEventListener('ended', stopCurrentSource);
@@ -1462,6 +1496,73 @@ btnScreenshot?.addEventListener('click', () => {
 });
 
 function download(filename, content, type) {
+  if (typeof window !== 'undefined' && window.AsciliAndroidBridge) {
+    const bridge = window.AsciliAndroidBridge;
+    const blob = content instanceof Blob ? content : new Blob([content], { type: type || 'application/octet-stream' });
+    const mime = type || blob.type || 'application/octet-stream';
+
+    // Chunk-based streaming export to prevent high-RAM base64 spikes and OOM
+    if (typeof bridge.startChunkedSave === 'function') {
+      try {
+        const sessionId = bridge.startChunkedSave(filename, mime);
+        if (sessionId) {
+          const CHUNK_SIZE = 512 * 1024; // 512 KB slice
+          let offset = 0;
+          const sendNextChunk = () => {
+            if (offset >= blob.size) {
+              bridge.finishChunkedSave(sessionId);
+              return;
+            }
+            const slice = blob.slice(offset, offset + CHUNK_SIZE);
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = reader.result;
+              const base64 = (typeof dataUrl === 'string') ? (dataUrl.split(',')[1] || '') : '';
+              if (base64 && bridge.writeSaveChunk(sessionId, base64)) {
+                offset += CHUNK_SIZE;
+                setTimeout(sendNextChunk, 0);
+              } else {
+                bridge.abortChunkedSave(sessionId);
+                bridge.showToast('Export failed while writing chunk.');
+              }
+            };
+            reader.onerror = () => {
+              bridge.abortChunkedSave(sessionId);
+              bridge.showToast('Export failed while reading slice.');
+            };
+            reader.readAsDataURL(slice);
+          };
+          sendNextChunk();
+          return;
+        }
+      } catch (chunkErr) {
+        console.warn('[ASCILI] Chunked save failed, falling back to legacy base64:', chunkErr);
+      }
+    }
+
+    if (typeof bridge.saveBase64File === 'function') {
+      try {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result;
+          const base64 = (typeof dataUrl === 'string') ? (dataUrl.split(',')[1] || '') : '';
+          if (base64) {
+            bridge.saveBase64File(filename, base64, mime);
+          } else {
+            bridge.showToast('Export failed: unable to encode file.');
+          }
+        };
+        reader.onerror = () => {
+          bridge.showToast('Export failed to read payload.');
+        };
+        reader.readAsDataURL(blob);
+        return;
+      } catch (bridgeErr) {
+        console.warn('[ASCILI] Native Android save failed, falling back to browser download:', bridgeErr);
+      }
+    }
+  }
+
   const a    = document.createElement('a');
   const blob = content instanceof Blob ? content : new Blob([content], { type });
   const objectUrl = URL.createObjectURL(blob);
@@ -2967,10 +3068,14 @@ if (typeof window !== 'undefined') {
 
 // ─── PWA Service Worker Registration & Cache Purging ──────────────────────────
 
+const CURRENT_CACHE_NAME = 'ascili-cache-v2.4.0';
+
 if (typeof window !== 'undefined' && 'caches' in window) {
   caches.keys().then(keys => {
     keys.forEach(k => {
-      if (k !== 'ascili-cache-v3') {
+      // Purge any outdated ascili caches, keep only current active cache
+      if (k.startsWith('ascili-cache-') && k !== CURRENT_CACHE_NAME) {
+        console.log('[ASCILI] Purging outdated cache:', k);
         caches.delete(k);
       }
     });
@@ -2988,4 +3093,26 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator && (window.loc
         console.warn('[ASCILI] Service worker registration failed:', err);
       });
   });
+}
+
+// ─── Native Android Bridge Integration ────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  const btnPrivacy = document.getElementById('btnPrivacyPolicy');
+  if (btnPrivacy) {
+    btnPrivacy.addEventListener('click', () => {
+      if (window.AsciliAndroidBridge && typeof window.AsciliAndroidBridge.showPrivacyPolicy === 'function') {
+        window.AsciliAndroidBridge.showPrivacyPolicy();
+      } else {
+        alert('ASCILI Privacy Policy:\n\n1. All ASCII rendering & video conversion occurs 100% locally on your device.\n2. Zero camera or audio data is ever transmitted to remote servers.\n3. Fully functional offline.');
+      }
+    });
+  }
+
+  // Add subtle tactile haptics for primary action buttons when running inside Android
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('button, .source-btn, .preset-btn, .dl-item');
+    if (btn && window.AsciliAndroidBridge && typeof window.AsciliAndroidBridge.vibrate === 'function') {
+      window.AsciliAndroidBridge.vibrate(15);
+    }
+  }, { passive: true });
 }

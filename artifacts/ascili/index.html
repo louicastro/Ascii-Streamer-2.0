@@ -10,14 +10,27 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="apple-touch-icon" href="./public/icon-192.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    @font-face {
+      font-family: 'JetBrains Mono';
+      font-style: normal;
+      font-weight: 400;
+      src: url('./fonts/jetbrains-mono-400.woff2') format('woff2');
+      font-display: swap;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono';
+      font-style: normal;
+      font-weight: 700;
+      src: url('./fonts/jetbrains-mono-700.woff2') format('woff2');
+      font-display: swap;
+    }
+  </style>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="./src/style.css?v=2.3" />
-  <link rel="stylesheet" href="./src/website-upgrade.css?v=2.3" />
+  <link rel="stylesheet" href="./src/style.css?v=2.4.0" />
+  <link rel="stylesheet" href="./src/website-upgrade.css?v=2.4.0" />
 </head>
 <body>
 
@@ -126,7 +139,7 @@
 
     <!-- ASCII output area -->
     <div class="ascii-container" id="asciiContainer">
-      <canvas class="ascii-canvas" id="asciiCanvas"></canvas>
+      <canvas class="ascii-canvas" id="asciiCanvas" width="640" height="360"></canvas>
       <div class="ascii-output" id="asciiOutput" style="display:none"></div>
 
       <!-- Scanlines overlay (optional CRT effect) -->
@@ -136,7 +149,7 @@
       <div class="waiting-overlay" id="waitingOverlay">
         <div class="waiting-hero">
           <div class="waiting-badge-row">
-            <span class="waiting-badge">V2.4</span>
+            <span class="waiting-badge">V2.4.0</span>
             <span class="waiting-tagline">REAL-TIME ASCII & ANSI VIDEO SYNTHESIZER</span>
           </div>
           <h1 class="waiting-title">Convert Webcam, Screen, or Video into ASCII Art</h1>
@@ -448,6 +461,11 @@
               OPEN EXPORT WORKSTATION (C)
             </button>
           </div>
+          <div class="setting-row" style="margin-top: 8px;">
+            <button class="source-btn" id="btnPrivacyPolicy" style="width: 100%; justify-content: center; padding: 8px 12px; font-size: 0.8rem; background: transparent; border: 1px solid #2a3a2d; color: #7a9c82; cursor: pointer; border-radius: 4px;">
+              🛡️ PRIVACY &amp; SECURITY NOTICE
+            </button>
+          </div>
         </div>
 
       </div>
@@ -582,6 +600,6 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="./src/app.js?v=2.3"></script>
+  <script type="module" src="./src/app.js?v=2.4.0"></script>
 </body>
 </html>

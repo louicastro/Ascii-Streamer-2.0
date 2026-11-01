@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Strictly disallow cleartext (HTTP) traffic across the entire application.
+      Mandatory for Google Play Store security compliance.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Secure virtual asset domain only. All fonts and assets are 100% bundled on-device. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">appassets.androidplatform.net</domain>
+    </domain-config>
+</network-security-config>

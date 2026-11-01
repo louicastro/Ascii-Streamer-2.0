@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:ns1="http://schemas.android.com/tools">
+    <color name="terminal_black">#080c09</color>
+    <color name="terminal_cyan">#00f5ff</color>
+    <color name="terminal_dialog_bg">#121914</color>
+    <color name="terminal_green">#39ff52</color>
+    <color name="terminal_green_dim">#1b802e</color>
+    <color name="terminal_surface">#0f1712</color>
+    <color name="terminal_text">#e6ffe6</color>
+    <string name="app_name">ASCILI</string>
+    <string name="audio_permission_rationale">ASCILI needs microphone access to record audio along with your ASCII video.</string>
+    <string name="camera_permission_rationale">ASCILI needs camera access to render live ASCII video streams. All processing is 100% on-device.</string>
+    <string name="close">Close</string>
+    <string name="file_save_error">Failed to save export: %1$s</string>
+    <string name="file_saved">Saved to Downloads: %1$s</string>
+    <string name="permission_denied">Permission denied. You can enable it anytime in Android Settings.</string>
+    <string formatted="false" name="privacy_policy_content">ASCILI respects your privacy:\n\n1. 100% On-Device Processing: All real-time ASCII conversion, webcam rendering, and video encoding occur strictly on your device.\n2. Zero Cloud Transmission: No camera frames, audio recordings, or personal data are ever uploaded to any server.\n3. Completely Offline: The core ASCII video engine functions 100% offline without requiring internet connectivity.\n4. Local Storage: Exported videos, GIFs, and subtitles are saved only to your local storage or shared at your explicit request.</string>
+    <string name="privacy_policy_title">ASCILI Privacy Notice</string>
+    <string name="share_title">Share ASCII Export</string>
+    <style name="Theme.Ascili" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        
+        <item name="colorPrimary">@color/terminal_green</item>
+        <item name="colorPrimaryVariant">@color/terminal_green_dim</item>
+        <item name="colorOnPrimary">@color/terminal_black</item>
+        
+        <item name="colorSecondary">@color/terminal_cyan</item>
+        <item name="colorSecondaryVariant">@color/terminal_cyan</item>
+        <item name="colorOnSecondary">@color/terminal_black</item>
+        
+        <item name="android:statusBarColor">@color/terminal_black</item>
+        <item name="android:navigationBarColor">@color/terminal_black</item>
+        <item name="android:windowBackground">@color/terminal_black</item>
+        <item name="android:windowLightStatusBar" ns1:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" ns1:targetApi="o_mr1">false</item>
+    </style>
+</resources>
