@@ -190,7 +190,25 @@ export function renderFrameToCanvas(videoEl, outputCanvas, cfg, overrides, engin
     outputCanvas.height = targetH;
   }
 
-  const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
+  const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+  const detector = cfg.detector || (typeof window !== 'undefined' && window.__ascili?.detector);
+  if ((isNegSpaceActive || detector?.enabled) && detector) {
+    try { detector.processFrame(videoEl); } catch {}
+  }
+
+  const renderCfg = {
+    ...cfg,
+    ...(overrides || {}),
+    cols,
+    rows,
+    syncOnly: true,
+    renderMode: cfg.renderMode || cfg.negSpaceMode || 'none',
+    maskThreshold: cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5,
+    maskFeather: cfg.maskFeather ?? 0.08,
+    bgBrightness: cfg.bgBrightness ?? cfg.negSpaceBgBrightness ?? 0,
+    bgContrast: cfg.bgContrast ?? cfg.negSpaceBgContrast ?? 0,
+    detector: (isNegSpaceActive || detector?.enabled) ? detector : null,
+  };
   const res = eng.renderFrame(videoEl, outputCanvas, renderCfg);
   return { rows, cols, rendered: Boolean(res?.rendered) };
 }
@@ -322,10 +340,27 @@ export class AsciliVideoExporter {
       this._canvas.height = canvasH;
     }
 
-    const renderCfg = { ...cfg, ...(overrides || {}), cols, rows, syncOnly: true };
+    const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+    const detector = cfg.detector || (typeof window !== 'undefined' && window.__ascili?.detector);
+    const renderCfg = {
+      ...cfg,
+      ...(overrides || {}),
+      cols,
+      rows,
+      syncOnly: true,
+      renderMode: cfg.renderMode || cfg.negSpaceMode || 'none',
+      maskThreshold: cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5,
+      maskFeather: cfg.maskFeather ?? 0.08,
+      bgBrightness: cfg.bgBrightness ?? cfg.negSpaceBgBrightness ?? 0,
+      bgContrast: cfg.bgContrast ?? cfg.negSpaceBgContrast ?? 0,
+      detector: (isNegSpaceActive || detector?.enabled) ? detector : null,
+    };
 
     const drawFrame = () => {
       let res = null;
+      if (renderCfg.detector && renderCfg.detector.enabled) {
+        try { renderCfg.detector.processFrame(videoEl); } catch {}
+      }
       try {
         res = this._engine.renderFrame(videoEl, this._canvas, renderCfg);
       } catch (err) {
@@ -354,8 +389,8 @@ export class AsciliVideoExporter {
     try {
       const ctx = this._canvas.getContext('2d');
       if (ctx) {
-        const sampleW = Math.min(32, this._canvas.width);
-        const sampleH = Math.min(32, this._canvas.height);
+        const sampleW = Math.min(64, this._canvas.width);
+        const sampleH = Math.min(64, this._canvas.height);
         const sampleData = ctx.getImageData(0, 0, sampleW, sampleH).data;
         let hasPixels = false;
         for (let i = 0; i < sampleData.length; i += 4) {
@@ -364,7 +399,19 @@ export class AsciliVideoExporter {
             break;
           }
         }
-        if (!hasPixels) {
+        // In negative space mode, top-left may be empty silhouette; check center
+        if (!hasPixels && isNegSpaceActive) {
+          const cx = Math.floor(this._canvas.width / 2);
+          const cy = Math.floor(this._canvas.height / 2);
+          const centerData = ctx.getImageData(Math.max(0, cx - 16), Math.max(0, cy - 16), 32, 32).data;
+          for (let i = 0; i < centerData.length; i += 4) {
+            if (centerData[i + 3] > 0 || centerData[i] > 0 || centerData[i + 1] > 0 || centerData[i + 2] > 0) {
+              hasPixels = true;
+              break;
+            }
+          }
+        }
+        if (!hasPixels && !isNegSpaceActive) {
           this._writable?.abort().catch(() => {});
           this._writable = null;
           onError?.('Rendered frame canvas is empty (0 pixels). Check video source and graphics support.');

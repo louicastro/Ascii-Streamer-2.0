@@ -372,6 +372,7 @@ function readConfig() {
 
   // Negative Space & Subject Segmentation controls
   if (selectNegSpaceMode) cfg.negSpaceMode = selectNegSpaceMode.value;
+  cfg.renderMode = cfg.negSpaceMode || 'none';
   if (checkSubjectDetection) {
     const shouldEnable = checkSubjectDetection.checked || (cfg.negSpaceMode && cfg.negSpaceMode !== 'none');
     detector.enabled = shouldEnable;
@@ -381,6 +382,13 @@ function readConfig() {
   } else {
     detector.enabled = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
   }
+
+  cfg.detector = detector.enabled ? detector : null;
+  cfg.maskThreshold = cfg.negSpaceSensitivity ?? 0.5;
+  cfg.maskFeather = 0.08;
+  cfg.bgBrightness = cfg.negSpaceBgBrightness ?? 0;
+  cfg.bgContrast = cfg.negSpaceBgContrast ?? 0;
+  cfg.fgCharSet = cfg.negSpaceFgCharSet;
 
   if (selectNegSpaceMethod) {
     cfg.negSpaceMethod = selectNegSpaceMethod.value;
@@ -2484,7 +2492,14 @@ function drawConverterPreview(videoEl, overrideCfg = null) {
     const previewCols = Math.min(baseCfg.cols || 80, 240);
     const charWFactor = (typeof CHAR_W_FACTOR === 'number' && CHAR_W_FACTOR > 0) ? CHAR_W_FACTOR : 0.601;
     const previewFontSize = Math.max(6, Math.min(12, Math.round(540 / (previewCols * charWFactor))));
-    const previewCfg = { ...baseCfg, cols: previewCols, fontSize: previewFontSize };
+    const isNegActive = baseCfg.negSpaceMode && baseCfg.negSpaceMode !== 'none';
+    const previewCfg = {
+      ...baseCfg,
+      cols: previewCols,
+      fontSize: previewFontSize,
+      detector: (isNegActive || detector.enabled) ? detector : null,
+      renderMode: baseCfg.negSpaceMode || 'none',
+    };
     renderFrameToCanvas(videoEl, cvPreviewCanvas, previewCfg, { fontSize: previewFontSize }, engine);
   } catch (err) {
     console.warn('drawConverterPreview error:', err);

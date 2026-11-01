@@ -849,9 +849,9 @@ export class AsciliWebGLRenderer {
 
     let hasMask = 0;
     if (config.detector && config.detector.enabled && renderModeInt > 0) {
+      gl.activeTexture(gl.TEXTURE3);
       const maskTex = config.detector.updateGLTexture(gl);
       if (maskTex) {
-        gl.activeTexture(gl.TEXTURE3);
         gl.bindTexture(gl.TEXTURE_2D, maskTex);
         gl.uniform1i(this._uMask, 3);
         hasMask = 1;
@@ -1906,12 +1906,33 @@ export class AsciliEngine {
     const lines = [];
     const chunkSize = 200;
 
+    const rMode = cfg.renderMode || cfg.negSpaceMode || 'none';
+    const detector = cfg.detector;
+    const thresh = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
+
     for (let r = 0; r < rows; r += chunkSize) {
       const endR = Math.min(rows, r + chunkSize);
       for (let cr = r; cr < endR; cr++) {
         let line = '';
         const offset = cr * cols;
         for (let c = 0; c < cols; c++) {
+          if (detector && detector.enabled && rMode !== 'none') {
+            const u = (c + 0.5) / cols;
+            const v = (cr + 0.5) / rows;
+            const maskVal = detector.sampleMaskAt(u, v);
+            const isSubject = maskVal >= thresh;
+            if (rMode === 'negative_space' && isSubject) {
+              line += ' ';
+              continue;
+            } else if (rMode === 'inverted_ascii' && !isSubject) {
+              line += ' ';
+              continue;
+            } else if (rMode === 'hybrid' && isSubject && cfg.fgCharSet) {
+              const fgEngine = this.getCharSetEngine(cfg.fgCharSet);
+              line += fgEngine.getCharForLuminance(lumGrid[offset + c], invert);
+              continue;
+            }
+          }
           line += charEngine.getCharForLuminance(lumGrid[offset + c], invert);
         }
         lines.push(line);
@@ -1944,6 +1965,9 @@ export class AsciliEngine {
     const isMono    = (cfg.colorMode || mode.colorMode) === 'monochrome';
     const monoColor = options.monoColor || cfg.monoColor || mode.defaultMonoColor;
     const fontSize  = options.fontSize  || cfg.fontSize || 10;
+    const rMode     = cfg.renderMode || cfg.negSpaceMode || 'none';
+    const detector  = cfg.detector;
+    const thresh    = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
 
     const htmlLines = [];
     const chunkSize = 150;
@@ -1955,6 +1979,18 @@ export class AsciliEngine {
         const offset = cr * cols;
         if (isMono) {
           for (let c = 0; c < cols; c++) {
+            if (detector && detector.enabled && rMode !== 'none') {
+              const u = (c + 0.5) / cols;
+              const v = (cr + 0.5) / rows;
+              const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+              if (rMode === 'negative_space' && isSubject) {
+                line += '&nbsp;';
+                continue;
+              } else if (rMode === 'inverted_ascii' && !isSubject) {
+                line += '&nbsp;';
+                continue;
+              }
+            }
             const p4 = (offset + c) * 4;
             const lum = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
             line += esc(charEngine.getCharForLuminance(lum, invert));
@@ -1963,6 +1999,29 @@ export class AsciliEngine {
           let currColor = null;
           let currRun   = '';
           for (let c = 0; c < cols; c++) {
+            if (detector && detector.enabled && rMode !== 'none') {
+              const u = (c + 0.5) / cols;
+              const v = (cr + 0.5) / rows;
+              const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+              if (rMode === 'negative_space' && isSubject) {
+                if (currColor !== null) {
+                  line += `<span style="color:rgb(${currColor})">${currRun}</span>`;
+                  currColor = null;
+                  currRun = '';
+                }
+                line += '&nbsp;';
+                continue;
+              } else if (rMode === 'inverted_ascii' && !isSubject) {
+                if (currColor !== null) {
+                  line += `<span style="color:rgb(${currColor})">${currRun}</span>`;
+                  currColor = null;
+                  currRun = '';
+                }
+                line += '&nbsp;';
+                continue;
+              }
+            }
+
             const p4 = (offset + c) * 4;
             let red = imgData[p4], green = imgData[p4+1], blue = imgData[p4+2];
             const lum = (0.299 * red + 0.587 * green + 0.114 * blue) / 255.0;
@@ -2033,13 +2092,28 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
     octx.drawImage(src, 0, 0, cols, rows);
     const imgData = octx.getImageData(0, 0, cols, rows).data;
 
-    const invert = cfg.invertChars || false;
+    const invert   = cfg.invertChars || false;
+    const rMode    = cfg.renderMode || cfg.negSpaceMode || 'none';
+    const detector = cfg.detector;
+    const thresh   = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
 
     const lines = [];
     for (let r = 0; r < rows; r++) {
       let line = '';
       const offset = r * cols;
       for (let c = 0; c < cols; c++) {
+        if (detector && detector.enabled && rMode !== 'none') {
+          const u = (c + 0.5) / cols;
+          const v = (r + 0.5) / rows;
+          const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+          if (rMode === 'negative_space' && isSubject) {
+            line += ' ';
+            continue;
+          } else if (rMode === 'inverted_ascii' && !isSubject) {
+            line += ' ';
+            continue;
+          }
+        }
         const p4 = (offset + c) * 4;
         const lum = (0.299 * imgData[p4] + 0.587 * imgData[p4 + 1] + 0.114 * imgData[p4 + 2]) / 255.0;
         line += charEngine.getCharForLuminance(lum, invert);
