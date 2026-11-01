@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # Node.js API Server + ASCILI Web Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ascii-streamer-api
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+    restart: unless-stopped
+
+  # Python Video Engine (Optional - uncomment to enable high-throughput Python backend)
+  # python-engine:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.python
+  #   container_name: ascii-streamer-python
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     PORT: 8000
+  #   volumes:
+  #     - ./ai_video_engine:/app/ai_video_engine
+  #     - ./converted_videos:/app/converted_videos
+  #   restart: unless-stopped
