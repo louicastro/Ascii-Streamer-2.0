@@ -59,9 +59,9 @@ export class AsciliGifEncoder {
     const w = this.width;
     const h = this.height;
     let data;
-    if (ctxOrCanvas instanceof CanvasRenderingContext2D) {
+    if (typeof CanvasRenderingContext2D !== 'undefined' && ctxOrCanvas instanceof CanvasRenderingContext2D) {
       data = ctxOrCanvas.getImageData(0, 0, w, h).data;
-    } else if (ctxOrCanvas instanceof HTMLCanvasElement || (typeof OffscreenCanvas !== 'undefined' && ctxOrCanvas instanceof OffscreenCanvas)) {
+    } else if ((typeof HTMLCanvasElement !== 'undefined' && ctxOrCanvas instanceof HTMLCanvasElement) || (typeof OffscreenCanvas !== 'undefined' && ctxOrCanvas instanceof OffscreenCanvas)) {
       const ctx = ctxOrCanvas.getContext('2d');
       data = ctx.getImageData(0, 0, w, h).data;
     } else if (ctxOrCanvas.data) {
@@ -145,14 +145,19 @@ export class AsciliGifEncoder {
     let codeSize = minCodeSize + 1;     // 9
     let nextCode = eoiCode + 1;         // 258
 
-    const dict = new Map();
+    const HASH_SIZE = 8192;
+    const hTab = new Int32Array(HASH_SIZE).fill(-1);
+    const codeTab = new Int32Array(HASH_SIZE);
+
     const resetDict = () => {
-      dict.clear();
+      hTab.fill(-1);
       codeSize = minCodeSize + 1;
       nextCode = eoiCode + 1;
     };
 
-    const outBytes = [];
+    // Preallocated output buffer to avoid hundreds of thousands of array pushes
+    const rawOut = new Uint8Array(pixels.length * 2 + 1024);
+    let outLen = 0;
     let curBits = 0;
     let curVal = 0;
 
@@ -160,7 +165,7 @@ export class AsciliGifEncoder {
       curVal |= (code << curBits);
       curBits += codeSize;
       while (curBits >= 8) {
-        outBytes.push(curVal & 0xFF);
+        rawOut[outLen++] = curVal & 0xFF;
         curVal >>= 8;
         curBits -= 8;
       }
@@ -172,14 +177,24 @@ export class AsciliGifEncoder {
     for (let i = 1; i < pixels.length; i++) {
       const k = pixels[i];
       const key = (curPrefix << 8) | k;
-      const code = dict.get(key);
 
-      if (code !== undefined) {
-        curPrefix = code;
-      } else {
+      // Fast hash table lookup with linear probing
+      let h = ((key * 2654435761) >>> 0) & (HASH_SIZE - 1);
+      let found = false;
+      while (hTab[h] !== -1) {
+        if (hTab[h] === key) {
+          curPrefix = codeTab[h];
+          found = true;
+          break;
+        }
+        h = (h + 1) & (HASH_SIZE - 1);
+      }
+
+      if (!found) {
         emitCode(curPrefix);
         if (nextCode < 4096) {
-          dict.set(key, nextCode++);
+          hTab[h] = key;
+          codeTab[h] = nextCode++;
           if (nextCode > (1 << codeSize) && codeSize < 12) {
             codeSize++;
           }
@@ -194,21 +209,22 @@ export class AsciliGifEncoder {
     emitCode(eoiCode);
 
     if (curBits > 0) {
-      outBytes.push(curVal & 0xFF);
+      rawOut[outLen++] = curVal & 0xFF;
     }
 
-    // Packetize into blocks of max 254 bytes
-    const packeted = [minCodeSize];
-    let pos = 0;
-    while (pos < outBytes.length) {
-      const blockSize = Math.min(254, outBytes.length - pos);
-      packeted.push(blockSize);
-      for (let j = 0; j < blockSize; j++) {
-        packeted.push(outBytes[pos + j]);
-      }
-      pos += blockSize;
+    // Packetize into blocks of max 254 bytes with zero-copy subarrays
+    const result = new Uint8Array(1 + outLen + Math.ceil(outLen / 254) + 2);
+    result[0] = minCodeSize;
+    let writePos = 1;
+    let readPos = 0;
+    while (readPos < outLen) {
+      const blockSize = Math.min(254, outLen - readPos);
+      result[writePos++] = blockSize;
+      result.set(rawOut.subarray(readPos, readPos + blockSize), writePos);
+      writePos += blockSize;
+      readPos += blockSize;
     }
-    packeted.push(0x00); // Block terminator
-    return new Uint8Array(packeted);
+    result[writePos++] = 0x00; // Block terminator
+    return result.subarray(0, writePos);
   }
 }

@@ -139,3 +139,25 @@ adb install -r dist-apk/ascili-v2.0.0-release.apk
 ### Option 2: Direct File Transfer
 1. Send `dist-apk/ascili-v2.0.0-release.apk` to your phone via USB, Bluetooth, Google Drive, or Telegram.
 2. Tap the `.apk` file on your phone and choose "Install".
+
+## 📱 Device Behavior and Troubleshooting
+
+- Android 8.0 (API 26) and newer are supported. Camera, microphone, and screen
+  capture availability still depends on device hardware and WebView support.
+- Media selection accepts local video and image files. The app does not request
+  broad storage permissions; Android's system picker grants access only to the
+  selected files.
+- Rendering and exports run on-device. Large videos can require substantial
+  memory and storage, especially at 1080p or higher.
+- The app is designed for offline use. The Python API is not required for local
+  camera, image, video, and export workflows.
+- If the app returns to the launcher after a heavy export, reopen it and use a
+  lower resolution or column count. Android may reclaim WebView renderer memory
+  under sustained GPU load.
+
+For a debug build, connect a device with USB debugging enabled and run:
+
+```bash
+cd android
+./gradlew installDebug
+```

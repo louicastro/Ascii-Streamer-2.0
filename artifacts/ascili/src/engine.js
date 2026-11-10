@@ -462,14 +462,14 @@ void main() {
   float isSubject = smoothstep(u_maskThreshold - u_maskFeather, u_maskThreshold + u_maskFeather, maskVal);
 
   if (u_renderMode == 1) {
-    // Negative Space Mode: Detected subject remains completely empty & black
-    if (isSubject >= 0.5) {
+    // Negative Space Mode: Detected subject interior remains empty background
+    if (isSubject >= 1.0) {
       gl_FragColor = vec4(u_bgColor, 1.0);
       return;
     }
   } else if (u_renderMode == 2) {
     // Inverted ASCII Mode: Detected subject rendered in ASCII, background empty
-    if (isSubject < 0.5) {
+    if (isSubject <= 0.0) {
       gl_FragColor = vec4(u_bgColor, 1.0);
       return;
     }
@@ -549,6 +549,11 @@ void main() {
   vec2 atlasUV    = (vec2(atlasCol, atlasRow) + inCell) / u_atlasGrid;
 
   float glyphAlpha = texture2D(u_atlas, atlasUV).a;
+  if (u_renderMode == 1) {
+    glyphAlpha *= clamp(1.0 - isSubject, 0.0, 1.0);
+  } else if (u_renderMode == 2) {
+    glyphAlpha *= clamp(isSubject, 0.0, 1.0);
+  }
 
   vec3 color = rgb;
   if (u_colorMode == 0) {
@@ -1543,6 +1548,7 @@ export class AsciliEngine {
     this._fallbackChars = new Uint8Array(0);
     this._fallbackColors = new Uint8Array(0);
     this._fallbackCapacity = 0;
+    this._fallbackMask = new Uint8Array(0);
     this._prevCharGrid = new Uint8Array(0);
   }
 
@@ -1608,6 +1614,9 @@ export class AsciliEngine {
         // Keep the visible canvas 2D-capable so a shader/context failure can
         // always fall back and screenshots/recordings see the finished frame.
         this._displayCtx = targetCanvas.getContext('2d', { alpha: false });
+        if (this._displayCtx) {
+          this._displayCtx.imageSmoothingEnabled = false;
+        }
         if (!this._webgl) {
           try {
             this._webgl = new AsciliWebGLRenderer(this._gpuCanvas);
@@ -1752,7 +1761,14 @@ export class AsciliEngine {
     }
     const charGrid = this._fallbackChars;
     const colorGrid = this._fallbackColors;
+    const renderMode = config.renderMode || config.negSpaceMode || 'none';
+    const detector = config.detector;
+    const maskEnabled = Boolean(detector?.enabled && renderMode !== 'none');
+    const maskThreshold = config.maskThreshold ?? config.negSpaceSensitivity ?? 0.5;
     const n = this._atlas.charCount;
+    if (maskEnabled && this._fallbackMask.length < cells) {
+      this._fallbackMask = new Uint8Array(cells);
+    }
 
     const doAdj = config.brightness || config.contrast || config.gamma || config.saturation;
 
@@ -1798,6 +1814,7 @@ export class AsciliEngine {
     const edgeThresholdSq = edgeThreshold * edgeThreshold;
     const allowEdge = enableEdge && n >= 5 && rows > 2 && cols > 2;
 
+    const activeMaskGrid = maskEnabled ? this._fallbackMask : null;
     for (let r = 0; r < rows; r++) {
       const rOffset = r * cols;
       for (let c = 0; c < cols; c++) {
@@ -1821,19 +1838,17 @@ export class AsciliEngine {
         }
 
         // Negative Space / Segmentation masking in 2D fallback
-        const rMode = config.renderMode || config.negSpaceMode || 'none';
-        if (config.detector && config.detector.enabled && rMode !== 'none') {
-          const uNorm = (c + 0.5) / cols;
-          const vNorm = (r + 0.5) / rows;
-          const maskVal = config.detector.sampleMaskAt(uNorm, vNorm);
-          const thresh = config.maskThreshold ?? config.negSpaceSensitivity ?? 0.5;
-          const isSubject = maskVal >= thresh;
+        if (maskEnabled) {
+          const uNorm = (crop.sx + ((c + 0.5) / cols) * crop.sw) / vw;
+          const vNorm = (crop.sy + ((r + 0.5) / rows) * crop.sh) / vh;
+          const isSubject = detector.sampleMaskAt(uNorm, vNorm) >= maskThreshold;
+          const shouldClear = (renderMode === 'negative_space' && isSubject) ||
+            (renderMode === 'inverted_ascii' && !isSubject);
+          activeMaskGrid[idx] = shouldClear ? 1 : 0;
 
-          if (rMode === 'negative_space') {
-            if (isSubject) charGrid[idx] = 0; // Space / empty glyph
-          } else if (rMode === 'inverted_ascii') {
-            if (!isSubject) charGrid[idx] = 0; // Space / empty glyph
-          } else if (rMode === 'hybrid' && config.fgCharEngine && isSubject) {
+          if (shouldClear) {
+            charGrid[idx] = 0; // Space / empty glyph
+          } else if (renderMode === 'hybrid' && config.fgCharEngine && isSubject) {
             charGrid[idx] = config.fgCharEngine.getCharIndexForLuminance(lumGrid[idx], config.invertChars);
           }
         }
@@ -1845,6 +1860,7 @@ export class AsciliEngine {
         this._prevCharGrid = new Uint8Array(cells);
       }
       for (let i = 0; i < cells; i++) {
+        if (activeMaskGrid?.[i]) continue;
         const prev = this._prevCharGrid[i];
         const current = charGrid[i];
         if (typeof current === 'number' && typeof prev === 'number' && Math.abs(current - prev) <= 2) {
@@ -1908,7 +1924,11 @@ export class AsciliEngine {
 
     const rMode = cfg.renderMode || cfg.negSpaceMode || 'none';
     const detector = cfg.detector;
+    const maskEnabled = Boolean(detector?.enabled && rMode !== 'none');
     const thresh = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
+    const fgEngine = rMode === 'hybrid' && cfg.fgCharSet
+      ? this.getCharSetEngine(cfg.fgCharSet)
+      : null;
 
     for (let r = 0; r < rows; r += chunkSize) {
       const endR = Math.min(rows, r + chunkSize);
@@ -1916,9 +1936,9 @@ export class AsciliEngine {
         let line = '';
         const offset = cr * cols;
         for (let c = 0; c < cols; c++) {
-          if (detector && detector.enabled && rMode !== 'none') {
-            const u = (c + 0.5) / cols;
-            const v = (cr + 0.5) / rows;
+          if (maskEnabled) {
+            const u = (crop.sx + ((c + 0.5) / cols) * crop.sw) / vw;
+            const v = (crop.sy + ((cr + 0.5) / rows) * crop.sh) / vh;
             const maskVal = detector.sampleMaskAt(u, v);
             const isSubject = maskVal >= thresh;
             if (rMode === 'negative_space' && isSubject) {
@@ -1927,8 +1947,7 @@ export class AsciliEngine {
             } else if (rMode === 'inverted_ascii' && !isSubject) {
               line += ' ';
               continue;
-            } else if (rMode === 'hybrid' && isSubject && cfg.fgCharSet) {
-              const fgEngine = this.getCharSetEngine(cfg.fgCharSet);
+            } else if (rMode === 'hybrid' && isSubject && fgEngine) {
               line += fgEngine.getCharForLuminance(lumGrid[offset + c], invert);
               continue;
             }
@@ -1958,7 +1977,16 @@ export class AsciliEngine {
     off.width  = cols;
     off.height = rows;
     const octx = off.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(src, 0, 0, cols, rows);
+    const vw = src.videoWidth  || src.width  || 640;
+    const vh = src.videoHeight || src.height || 480;
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+    octx.save();
+    if (cfg.mirror) {
+      octx.translate(cols, 0);
+      octx.scale(-1, 1);
+    }
+    octx.drawImage(src, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+    octx.restore();
     const imgData = octx.getImageData(0, 0, cols, rows).data;
 
     const invert    = cfg.invertChars || false;
@@ -1980,8 +2008,8 @@ export class AsciliEngine {
         if (isMono) {
           for (let c = 0; c < cols; c++) {
             if (detector && detector.enabled && rMode !== 'none') {
-              const u = (c + 0.5) / cols;
-              const v = (cr + 0.5) / rows;
+              const u = (crop.sx + ((c + 0.5) / cols) * crop.sw) / vw;
+              const v = (crop.sy + ((cr + 0.5) / rows) * crop.sh) / vh;
               const isSubject = detector.sampleMaskAt(u, v) >= thresh;
               if (rMode === 'negative_space' && isSubject) {
                 line += '&nbsp;';
@@ -2089,7 +2117,16 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
     off.width  = cols;
     off.height = rows;
     const octx = off.getContext('2d', { willReadFrequently: true });
-    octx.drawImage(src, 0, 0, cols, rows);
+    const vw = src.videoWidth  || src.width  || 640;
+    const vh = src.videoHeight || src.height || 480;
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+    octx.save();
+    if (cfg.mirror) {
+      octx.translate(cols, 0);
+      octx.scale(-1, 1);
+    }
+    octx.drawImage(src, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+    octx.restore();
     const imgData = octx.getImageData(0, 0, cols, rows).data;
 
     const invert   = cfg.invertChars || false;
@@ -2103,8 +2140,8 @@ pre{font-family:'Courier New',monospace;font-size:${fontSize}px;line-height:1;co
       const offset = r * cols;
       for (let c = 0; c < cols; c++) {
         if (detector && detector.enabled && rMode !== 'none') {
-          const u = (c + 0.5) / cols;
-          const v = (r + 0.5) / rows;
+          const u = (crop.sx + ((c + 0.5) / cols) * crop.sw) / vw;
+          const v = (crop.sy + ((r + 0.5) / rows) * crop.sh) / vh;
           const isSubject = detector.sampleMaskAt(u, v) >= thresh;
           if (rMode === 'negative_space' && isSubject) {
             line += ' ';

@@ -879,6 +879,12 @@ export class AsciliSrtExporter {
     const colorMode = isYoutube ? 'monochrome' : (cfg.colorMode || 'monochrome');
     const monoColor = cfg.monoColor || '#39ff52';
 
+    const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+    const detector = cfg.detector || (typeof window !== 'undefined' && window.__ascili?.detector);
+    const rMode = cfg.renderMode || cfg.negSpaceMode || 'none';
+    const maskEnabled = Boolean((isNegSpaceActive || detector?.enabled) && detector && rMode !== 'none');
+    const thresh = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
+
     let yttPalette = [];
     let yttPenLut = null;
     if (isYtt) {
@@ -1170,6 +1176,9 @@ export class AsciliSrtExporter {
     const monoLower = monoColor.toLowerCase();
 
     const renderText = () => {
+      if (maskEnabled) {
+        try { detector.processFrame(videoEl); } catch {}
+      }
       sample.ctx.save();
       if (cfg.mirror) {
         sample.ctx.translate(cols, 0);
@@ -1186,6 +1195,15 @@ export class AsciliSrtExporter {
             let lineStr = '';
             const rowOffset = row * cols * 4;
             for (let col = 0; col < cols; col++) {
+              if (maskEnabled) {
+                const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+                const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+                const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+                if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+                  lineStr += '&#160;';
+                  continue;
+                }
+              }
               const index = rowOffset + col * 4;
               let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
               if (doAdjust) {
@@ -1219,6 +1237,15 @@ export class AsciliSrtExporter {
           }
           const rowOffset = row * cols * 4;
           for (let col = 0; col < cols; col++) {
+            if (maskEnabled) {
+              const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+              const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+              const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+              if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+                runText += '&#160;';
+                continue;
+              }
+            }
             const index = rowOffset + col * 4;
             let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
             if (doAdjust) {
@@ -1265,6 +1292,15 @@ export class AsciliSrtExporter {
           let lineStr = '';
           const rowOffset = row * cols * 4;
           for (let col = 0; col < cols; col++) {
+            if (maskEnabled) {
+              const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+              const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+              const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+              if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+                lineStr += '\u00A0';
+                continue;
+              }
+            }
             const index = rowOffset + col * 4;
             let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
             if (doAdjust) {
@@ -1293,6 +1329,15 @@ export class AsciliSrtExporter {
             let lineStr = '';
             const rowOffset = row * cols * 4;
             for (let col = 0; col < cols; col++) {
+              if (maskEnabled) {
+                const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+                const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+                const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+                if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+                  lineStr += ' ';
+                  continue;
+                }
+              }
               const index = rowOffset + col * 4;
               let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
               if (doAdjust) {
@@ -1319,6 +1364,15 @@ export class AsciliSrtExporter {
           let lineStr = '';
           const rowOffset = row * cols * 4;
           for (let col = 0; col < cols; col++) {
+            if (maskEnabled) {
+              const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+              const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+              const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+              if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+                lineStr += ' ';
+                continue;
+              }
+            }
             const index = rowOffset + col * 4;
             let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
             if (doAdjust) {
@@ -1347,6 +1401,20 @@ export class AsciliSrtExporter {
         let runText = '';
         const rowOffset = row * cols * 4;
         for (let col = 0; col < cols; col++) {
+          if (maskEnabled) {
+            const u = (crop.sx + ((col + 0.5) / cols) * crop.sw) / videoWidth;
+            const v = (crop.sy + ((row + 0.5) / rows) * crop.sh) / videoHeight;
+            const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+            if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+              if (runText.length > 0) {
+                runs.push(isAss ? `{\\c${runColor}}${runText}` : `<font color="${runColor}">${runText}</font>`);
+                runText = '';
+                runColor = null;
+              }
+              runs.push(isAss ? ' ' : '&nbsp;');
+              continue;
+            }
+          }
           const index = rowOffset + col * 4;
           let red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2];
           if (doAdjust) {
@@ -2217,7 +2285,14 @@ export class AsciliHtmlExporter {
     const cols = Math.min(120, Math.max(20, Math.round(cfg.cols || 80)));
     const vw = videoEl.videoWidth || 640;
     const vh = videoEl.videoHeight || 480;
-    const rows = Math.max(1, Math.round(cols * (vh / vw) * 0.45));
+    const crop = computeCropBox(vw, vh, cfg.aspectRatio);
+    const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
+
+    const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+    const detector = cfg.detector || (typeof window !== 'undefined' && window.__ascili?.detector);
+    const rMode = cfg.renderMode || cfg.negSpaceMode || 'none';
+    const maskEnabled = Boolean((isNegSpaceActive || detector?.enabled) && detector && rMode !== 'none');
+    const thresh = cfg.maskThreshold ?? cfg.negSpaceSensitivity ?? 0.5;
 
     const sampleCanvas = document.createElement('canvas');
     sampleCanvas.width = cols;
@@ -2411,7 +2486,18 @@ export class AsciliHtmlExporter {
         return;
       }
 
-      sampleCtx.drawImage(videoEl, 0, 0, cols, rows);
+      if (maskEnabled) {
+        try { detector.processFrame(videoEl); } catch {}
+      }
+
+      sampleCtx.save();
+      if (cfg.mirror) {
+        sampleCtx.translate(cols, 0);
+        sampleCtx.scale(-1, 1);
+      }
+      sampleCtx.drawImage(videoEl, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+      sampleCtx.restore();
+
       const imgData = sampleCtx.getImageData(0, 0, cols, rows);
       const data = imgData.data;
 
@@ -2420,6 +2506,15 @@ export class AsciliHtmlExporter {
         if (r > 0) frameText += '\n';
         const offset = r * cols * 4;
         for (let c = 0; c < cols; c++) {
+          if (maskEnabled) {
+            const u = (crop.sx + ((c + 0.5) / cols) * crop.sw) / vw;
+            const v = (crop.sy + ((r + 0.5) / rows) * crop.sh) / vh;
+            const isSubject = detector.sampleMaskAt(u, v) >= thresh;
+            if ((rMode === 'negative_space' && isSubject) || (rMode === 'inverted_ascii' && !isSubject)) {
+              frameText += ' ';
+              continue;
+            }
+          }
           const idx = offset + c * 4;
           const lum = (0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]) / 255;
           let chIdx = Math.round(lum * (numChars - 1));

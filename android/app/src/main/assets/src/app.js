@@ -24,6 +24,7 @@ const asciiCanvas   = $('asciiCanvas');
 const asciiContainer = $('asciiContainer');
 const waitingOverlay = $('waitingOverlay');
 const sourceVideo   = $('sourceVideo');
+const sourceImage   = $('sourceImage');
 const sourcePreview = $('sourcePreview');
 const sourceLabel   = $('sourceLabel');
 const settingsPanel = $('settingsPanel');
@@ -171,6 +172,7 @@ const state = {
   facingMode:    'user',   // 'user' (front) | 'environment' (rear)
   currentFile:   null,     // uploaded File object for seamless export
   currentObjectUrl: null,
+  sourceImage:   null,     // active HTMLImageElement if an image source is loaded
   sourceLoadToken: 0,
   running:       false,
   paused:        false,
@@ -182,6 +184,7 @@ const state = {
   fpsAccum:      0,
   lastFpsTs:     0,
   actualFps:     0,
+  lastTelemetryTs: 0,
   renderWarningShown: false,
   monoColor:     '#39ff52',
   scanlinesOn:   false,
@@ -192,6 +195,11 @@ const state = {
   slowRenderSamples: 0,
   fastRenderSamples: 0,
 };
+
+function getActiveSource() {
+  if (state.sourceImage) return state.sourceImage;
+  return sourceVideo;
+}
 
 // Config (mirrors UI controls)
 const cfg = {
@@ -237,22 +245,32 @@ if (typeof window !== 'undefined') {
 
 let lastLayoutRows = 0;
 let lastLayoutCols = 0;
+let cachedContainerW = 0;
+let cachedContainerH = 0;
+let lastLayoutCssW = 0;
+let lastLayoutCssH = 0;
+
+function refreshContainerSize() {
+  cachedContainerW = asciiContainer ? asciiContainer.clientWidth : 0;
+  cachedContainerH = asciiContainer ? asciiContainer.clientHeight : 0;
+  if (!cachedContainerW || !cachedContainerH) {
+    cachedContainerW = (typeof window !== 'undefined' ? window.innerWidth : 360) || 360;
+    cachedContainerH = Math.max(200, (typeof window !== 'undefined' ? window.innerHeight : 640) - 140);
+  }
+}
 
 function updateAsciiLayout(rows, cols, force = false) {
   if (!rows || !cols) return;
-  if (!force && rows === lastLayoutRows && cols === lastLayoutCols) return;
+  if (!force && rows === lastLayoutRows && cols === lastLayoutCols && cachedContainerW && cachedContainerH) return;
   lastLayoutRows = rows;
   lastLayoutCols = cols;
 
-  let cw = asciiContainer ? asciiContainer.clientWidth : 0;
-  let ch = asciiContainer ? asciiContainer.clientHeight : 0;
-  if (!cw || !ch) {
-    cw = (typeof window !== 'undefined' ? window.innerWidth : 360) || 360;
-    ch = Math.max(200, (typeof window !== 'undefined' ? window.innerHeight : 640) - 140);
+  if (force || !cachedContainerW || !cachedContainerH) {
+    refreshContainerSize();
   }
 
-  const availW = Math.max(40, cw - 8);
-  const availH = Math.max(40, ch - 8);
+  const availW = Math.max(40, cachedContainerW - 8);
+  const availH = Math.max(40, cachedContainerH - 8);
 
   // Character cell aspect ratio: Courier New character width / height ≈ 0.601
   const gridAspect = (cols * 0.601) / rows;
@@ -270,8 +288,12 @@ function updateAsciiLayout(rows, cols, force = false) {
   cssW = Math.max(32, cssW);
   cssH = Math.max(32, cssH);
 
-  asciiCanvas.style.width  = cssW + 'px';
-  asciiCanvas.style.height = cssH + 'px';
+  if (cssW !== lastLayoutCssW || cssH !== lastLayoutCssH) {
+    lastLayoutCssW = cssW;
+    lastLayoutCssH = cssH;
+    asciiCanvas.style.width  = cssW + 'px';
+    asciiCanvas.style.height = cssH + 'px';
+  }
 
   // Physical buffer resolution for retina / high-DPI displays
   const requestedDpr = Math.min(2, window.devicePixelRatio || 1);
@@ -286,13 +308,20 @@ function updateAsciiLayout(rows, cols, force = false) {
 }
 
 window.addEventListener('resize', () => {
+  refreshContainerSize();
   if (lastLayoutRows && lastLayoutCols) {
     updateAsciiLayout(lastLayoutRows, lastLayoutCols, true);
   }
 });
 
-if (typeof ResizeObserver !== 'undefined') {
-  const layoutObserver = new ResizeObserver(() => {
+if (typeof ResizeObserver !== 'undefined' && asciiContainer) {
+  const layoutObserver = new ResizeObserver((entries) => {
+    if (entries?.[0]?.contentRect) {
+      cachedContainerW = Math.round(entries[0].contentRect.width);
+      cachedContainerH = Math.round(entries[0].contentRect.height);
+    } else {
+      refreshContainerSize();
+    }
     if (lastLayoutRows && lastLayoutCols) {
       updateAsciiLayout(lastLayoutRows, lastLayoutCols, true);
     }
@@ -454,15 +483,34 @@ function readConfig() {
   state.currentScale = 0;
   engine.reset();
 
-  if ((!state.running || state.paused) && sourceVideo && sourceVideo.readyState >= 2 && asciiCanvas && asciiCanvas.width > 0) {
+  const src = getActiveSource();
+  const isImage = (typeof HTMLImageElement !== 'undefined' && src instanceof HTMLImageElement);
+  const isReady = isImage
+    ? (src.complete && (src.naturalWidth || src.width) > 0)
+    : (src && src.readyState >= 2 && src.videoWidth > 0);
+
+  if ((!state.running || state.paused || isImage) && isReady && asciiCanvas && asciiCanvas.width > 0) {
+    const sw = isImage ? (src.naturalWidth || src.width) : src.videoWidth;
+    const sh = isImage ? (src.naturalHeight || src.height) : src.videoHeight;
     const targetCols = Math.max(20, Math.floor(cfg.cols * (state.qualityScale || 1.0)));
-    const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
-    const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
+    const expectedRows = Math.max(1, Math.round(targetCols * (sh / sw) * 0.45));
+    const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
+    if (isNegSpaceActive || detector.enabled) {
+      detector.processFrame(src);
+    }
+    const dims = engine.renderFrame(src, asciiCanvas, {
       ...cfg,
       cols: targetCols,
       rows: expectedRows,
       monoColor: state.monoColor,
       scanlines: state.scanlinesOn,
+      detector: (isNegSpaceActive || detector.enabled) ? detector : null,
+      renderMode: cfg.negSpaceMode,
+      maskThreshold: cfg.negSpaceSensitivity,
+      maskFeather: 0.08,
+      bgBrightness: cfg.negSpaceBgBrightness,
+      bgContrast: cfg.negSpaceBgContrast,
+      fgCharSet: cfg.negSpaceFgCharSet,
     });
     if (dims.rendered !== false) {
       updateAsciiLayout(dims.rows, dims.cols);
@@ -656,6 +704,10 @@ if (checkScanlines) {
 if (mobileMenuBtn) {
   mobileMenuBtn.addEventListener('click', () => {
     toggleSettings();
+    mobileMenuBtn.setAttribute(
+      'aria-expanded',
+      String(!settingsPanel.classList.contains('collapsed')),
+    );
   });
 }
 
@@ -895,8 +947,11 @@ btnRecord.addEventListener('click', () => {
 
 function scheduleRender() {
   if (!state.running || state.paused) return;
-  if (typeof sourceVideo.requestVideoFrameCallback === 'function') {
-    state.videoFrameCallbackId = sourceVideo.requestVideoFrameCallback((now) => {
+  const src = getActiveSource();
+  const isVideo = (typeof HTMLVideoElement !== 'undefined' && src instanceof HTMLVideoElement);
+
+  if (isVideo && typeof src.requestVideoFrameCallback === 'function' && !src.paused) {
+    state.videoFrameCallbackId = src.requestVideoFrameCallback((now) => {
       state.videoFrameCallbackId = null;
       renderLoop(now);
     });
@@ -938,17 +993,29 @@ function adaptRenderQuality(renderCostMs, frameBudgetMs) {
 
 function renderLoop(ts) {
   if (state.paused || !state.running) return;
+  const src = getActiveSource();
+  const isImage = (typeof HTMLImageElement !== 'undefined' && src instanceof HTMLImageElement);
+  const isVideo = (typeof HTMLVideoElement !== 'undefined' && src instanceof HTMLVideoElement);
+
+  if (isImage) {
+    if (!src.complete || !(src.naturalWidth || src.width)) return;
+  } else if (isVideo) {
+    if (!src.videoWidth || (src.readyState < 2 && src.paused)) return;
+  } else {
+    return;
+  }
+
   scheduleRender();
 
   const interval = 1000 / cfg.fps;
   if (ts - state.lastFrameTs < interval) return;
 
-  if (!sourceVideo.videoWidth || (sourceVideo instanceof HTMLMediaElement && sourceVideo.readyState < 2)) {
-    return;
-  }
+  const sw = isImage ? (src.naturalWidth || src.width) : src.videoWidth;
+  const sh = isImage ? (src.naturalHeight || src.height) : src.videoHeight;
+  if (!sw || !sh) return;
 
   const targetCols = Math.max(20, Math.floor(cfg.cols * state.qualityScale));
-  const expectedRows = Math.max(1, Math.round(targetCols * (sourceVideo.videoHeight / sourceVideo.videoWidth) * 0.45));
+  const expectedRows = Math.max(1, Math.round(targetCols * (sh / sw) * 0.45));
 
   // Guarantee canvas dimensions and aspect ratio are established before render call
   updateAsciiLayout(expectedRows, targetCols);
@@ -956,23 +1023,29 @@ function renderLoop(ts) {
   // Execute real-time subject segmentation if negative space mode or detector is active
   const isNegSpaceActive = cfg.negSpaceMode && cfg.negSpaceMode !== 'none';
   if (isNegSpaceActive || detector.enabled) {
-    detector.processFrame(sourceVideo);
+    detector.processFrame(src);
 
-    // Update status badge & coverage telemetry
-    if (negSpaceStatusBadge) {
-      if (detector.modelStatus === 'ready') {
-        negSpaceStatusBadge.textContent = 'Neural Human Active';
-        negSpaceStatusBadge.className = 'neg-space-status-badge neural';
-      } else if (detector.modelStatus === 'offline_fallback') {
-        negSpaceStatusBadge.textContent = 'CV Saliency Active (Offline)';
-        negSpaceStatusBadge.className = 'neg-space-status-badge offline';
-      } else {
-        negSpaceStatusBadge.textContent = 'CV Saliency Active';
-        negSpaceStatusBadge.className = 'neg-space-status-badge';
+    // Throttle status badge & coverage telemetry (max 4 Hz to avoid DOM layout thrashing)
+    if (!state.lastTelemetryTs || ts - state.lastTelemetryTs > 250) {
+      state.lastTelemetryTs = ts;
+      if (negSpaceStatusBadge) {
+        const text = detector.modelStatus === 'ready'
+          ? 'Neural Human Active'
+          : detector.modelStatus === 'offline_fallback'
+          ? 'CV Saliency Active (Offline)'
+          : 'CV Saliency Active';
+        const cls = detector.modelStatus === 'ready'
+          ? 'neg-space-status-badge neural'
+          : detector.modelStatus === 'offline_fallback'
+          ? 'neg-space-status-badge offline'
+          : 'neg-space-status-badge';
+        if (negSpaceStatusBadge.textContent !== text) negSpaceStatusBadge.textContent = text;
+        if (negSpaceStatusBadge.className !== cls) negSpaceStatusBadge.className = cls;
       }
-    }
-    if (negSpaceCoverage) {
-      negSpaceCoverage.textContent = `Subject: ${(detector.coverageRatio * 100).toFixed(0)}%`;
+      if (negSpaceCoverage) {
+        const covText = `Subject: ${(detector.coverageRatio * 100).toFixed(0)}%`;
+        if (negSpaceCoverage.textContent !== covText) negSpaceCoverage.textContent = covText;
+      }
     }
   }
 
@@ -984,7 +1057,7 @@ function renderLoop(ts) {
   }
 
   const t0 = performance.now();
-  const dims = engine.renderFrame(sourceVideo, asciiCanvas, {
+  const dims = engine.renderFrame(src, asciiCanvas, {
     ...cfg,
     cols: targetCols,
     rows: expectedRows,
@@ -1009,7 +1082,6 @@ function renderLoop(ts) {
   }
   state.consecutiveFailedFrames = 0;
   state.renderWarningShown = false;
-  updateAsciiLayout(dims.rows, dims.cols);
   const latency = performance.now() - t0;
   const performanceStats = engine.getPerformanceStats();
   const measuredRenderMs = performanceStats.gpuTimeMs ?? performanceStats.workerTimeMs ?? latency;
@@ -1017,7 +1089,7 @@ function renderLoop(ts) {
 
   // If live recording is active, capture this frame
   if (liveRecorder.running) {
-    liveRecorder.captureFrame(sourceVideo, cfg);
+    liveRecorder.captureFrame(src, cfg);
   }
   if (liveGifRecorder.running) {
     const finishedGifBlob = liveGifRecorder.captureFrame(asciiCanvas);
@@ -1030,7 +1102,7 @@ function renderLoop(ts) {
   state.frameCount++;
 
   // Update timeline for file playback
-  if (state.sourceType === 'file' && !state.vtSeeking) {
+  if (state.sourceType === 'file' && isVideo && !state.vtSeeking) {
     updateTimeline();
   }
 
@@ -1075,10 +1147,21 @@ function stopCurrentSource() {
     state.stream = null;
   }
   state.sourceLoadToken++;
-  sourceVideo.pause();
-  sourceVideo.srcObject = null;
-  sourceVideo.removeAttribute('src');
-  sourceVideo.load();
+  if (state.sourceImage) {
+    state.sourceImage.onload = null;
+    state.sourceImage = null;
+  }
+  if (sourceImage) {
+    sourceImage.style.display = 'none';
+    sourceImage.removeAttribute('src');
+  }
+  if (sourceVideo) {
+    sourceVideo.style.display = '';
+    sourceVideo.pause();
+    sourceVideo.srcObject = null;
+    sourceVideo.removeAttribute('src');
+    sourceVideo.load();
+  }
   if (state.currentObjectUrl) {
     URL.revokeObjectURL(state.currentObjectUrl);
     state.currentObjectUrl = null;
@@ -1183,36 +1266,31 @@ function attachFile(file) {
     const img = new Image();
     img.onload = () => {
       if (loadToken !== state.sourceLoadToken) return;
-      const cvs = document.createElement('canvas');
-      cvs.width = img.naturalWidth || img.width || 640;
-      cvs.height = img.naturalHeight || img.height || 480;
-      const ctx = cvs.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-
-      const stream = cvs.captureStream ? cvs.captureStream(30) : null;
-      if (stream) {
-        sourceVideo.src = '';
-        sourceVideo.srcObject = stream;
-        sourceVideo.muted = true;
-        sourceVideo.play().then(() => {
-          waitingOverlay.classList.add('hidden');
-          sourcePreview.classList.add('visible');
-          sourceLabel.textContent = 'IMAGE';
-          if (!state.running) startRenderLoop();
-        }).catch(() => {});
-      } else {
-        waitingOverlay.classList.add('hidden');
-        sourcePreview.classList.add('visible');
-        sourceLabel.textContent = 'IMAGE';
-        if (!state.running) startRenderLoop();
+      state.sourceImage = img;
+      if (sourceVideo) sourceVideo.style.display = 'none';
+      if (sourceImage) {
+        sourceImage.src = url;
+        sourceImage.style.display = 'block';
       }
+      waitingOverlay.classList.add('hidden');
+      sourcePreview.classList.add('visible');
+      sourceLabel.textContent = 'IMAGE';
+      btnFile.classList.add('active');
+      vtBar.classList.remove('visible');
+      readConfig();
+      if (!state.running) startRenderLoop();
+    };
+    img.onerror = () => {
+      if (loadToken !== state.sourceLoadToken) return;
+      stopCurrentSource();
+      showToast('Could not load this image file.');
     };
     img.src = url;
     return;
   }
 
   if (!isVideoFile(file)) {
-    showToast('Choose a supported video (MP4/WebM) or image (PNG/JPG/WebP) file.');
+    showToast('Choose a supported video (MP4/WebM/MOV/MKV) or image (PNG/JPG/WebP/GIF) file.');
     return;
   }
   stopCurrentSource();
@@ -1221,6 +1299,8 @@ function attachFile(file) {
   state.currentFile = file;
   const url = URL.createObjectURL(file);
   state.currentObjectUrl = url;
+  if (sourceImage) sourceImage.style.display = 'none';
+  if (sourceVideo) sourceVideo.style.display = '';
   sourceVideo.loop  = true;
   sourceVideo.muted = true;
   sourceVideo.defaultMuted = true;
@@ -1230,60 +1310,69 @@ function attachFile(file) {
   sourceVideo.controls = false;
   sourceVideo.src = url;
 
-  let hasFrame = false;
-  let playbackStarted = false;
+  let readyDone = false;
+  const cleanupListeners = () => {
+    sourceVideo.removeEventListener('loadedmetadata', startWhenReady);
+    sourceVideo.removeEventListener('loadeddata', startWhenReady);
+    sourceVideo.removeEventListener('canplay', startWhenReady);
+    sourceVideo.removeEventListener('playing', startWhenReady);
+    sourceVideo.removeEventListener('timeupdate', startWhenReady);
+  };
   const startWhenReady = () => {
-    if (loadToken !== state.sourceLoadToken || !hasFrame || !playbackStarted || !sourceVideo.videoWidth) return;
+    if (loadToken !== state.sourceLoadToken || readyDone) return;
+    if (!sourceVideo.videoWidth || !sourceVideo.videoHeight) return;
+    readyDone = true;
+    cleanupListeners();
     sourceVideo.controls = false;
     waitingOverlay.classList.add('hidden');
     sourcePreview.classList.add('visible');
     sourceLabel.textContent = 'FILE';
+    btnFile.classList.add('active');
     updateTimeline();
+    readConfig();
     if (!state.running) startRenderLoop();
   };
-  const handleFrame = () => {
-    if (loadToken !== state.sourceLoadToken) return;
-    hasFrame = true;
-    if (sourceVideo.videoWidth) {
-      waitingOverlay.classList.add('hidden');
-      sourcePreview.classList.add('visible');
-      sourceLabel.textContent = 'FILE';
-    }
-    startWhenReady();
-  };
-  const handlePlaying = () => {
-    if (loadToken !== state.sourceLoadToken) return;
-    playbackStarted = true;
-    startWhenReady();
-  };
+
   const handleError = () => {
     if (loadToken !== state.sourceLoadToken) return;
+    cleanupListeners();
     const message = filePlaybackError();
     stopCurrentSource();
     showToast(message);
   };
 
-  sourceVideo.addEventListener('loadeddata', handleFrame, { once: true });
-  sourceVideo.addEventListener('playing', handlePlaying, { once: true });
+  sourceVideo.addEventListener('loadedmetadata', startWhenReady);
+  sourceVideo.addEventListener('loadeddata', startWhenReady);
+  sourceVideo.addEventListener('canplay', startWhenReady);
+  sourceVideo.addEventListener('playing', startWhenReady);
+  sourceVideo.addEventListener('timeupdate', startWhenReady);
   sourceVideo.addEventListener('error', handleError, { once: true });
+
   sourceVideo.load();
-  sourceVideo.play().then(() => {
-    playbackStarted = true;
+  if (sourceVideo.readyState >= 2 && sourceVideo.videoWidth > 0) {
     startWhenReady();
-  }).catch(err => {
-    if (loadToken !== state.sourceLoadToken) return;
-    if (err.name === 'NotAllowedError') {
-      sourceVideo.controls = true;
-      if (hasFrame) {
+  }
+
+  const playPromise = sourceVideo.play();
+  if (playPromise !== undefined) {
+    playPromise.then(() => {
+      startWhenReady();
+    }).catch(err => {
+      if (loadToken !== state.sourceLoadToken) return;
+      if (err.name === 'NotAllowedError') {
+        sourceVideo.controls = true;
         waitingOverlay.classList.add('hidden');
         sourcePreview.classList.add('visible');
         sourceLabel.textContent = 'FILE';
+        btnFile.classList.add('active');
+        showToast('Press Play on the video preview to start rendering.');
+      } else if (sourceVideo.error) {
+        handleError();
+      } else if (sourceVideo.readyState >= 2 && sourceVideo.videoWidth > 0) {
+        startWhenReady();
       }
-      showToast('Press Play on the video preview to start rendering.');
-    } else {
-      handleError();
-    }
-  });
+    });
+  }
 }
 
 // ─── Source Preview Touch & Drag (Mobile) ───────────────────────────────────
@@ -1327,46 +1416,57 @@ if (sourcePreview) {
 
 let dragCounter = 0;
 
-asciiContainer.addEventListener('dragenter', e => {
+function handleDragEnter(e) {
   e.preventDefault();
   dragCounter++;
-  asciiContainer.classList.add('drop-active');
-  dropOverlay.classList.add('visible');
-});
+  asciiContainer?.classList.add('drop-active');
+  dropOverlay?.classList.add('visible');
+}
 
-asciiContainer.addEventListener('dragover', e => {
+function handleDragOver(e) {
   e.preventDefault();
-});
+}
 
-asciiContainer.addEventListener('dragleave', e => {
+function handleDragLeave(e) {
   e.preventDefault();
   dragCounter--;
   if (dragCounter <= 0) {
     dragCounter = 0;
-    asciiContainer.classList.remove('drop-active');
-    dropOverlay.classList.remove('visible');
+    asciiContainer?.classList.remove('drop-active');
+    dropOverlay?.classList.remove('visible');
   }
-});
+}
 
-asciiContainer.addEventListener('drop', e => {
+function handleGlobalDrop(e) {
   e.preventDefault();
   dragCounter = 0;
-  asciiContainer.classList.remove('drop-active');
-  dropOverlay.classList.remove('visible');
+  asciiContainer?.classList.remove('drop-active');
+  dropOverlay?.classList.remove('visible');
 
-  const file = e.dataTransfer.files[0];
+  // If dropped inside converter modal drop zone, let cvDropZone handle it
+  if (cvOverlay?.classList.contains('open') && cvDropZone?.contains(e.target)) {
+    return;
+  }
+
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
   if (isVideoFile(file) || isImageFile(file)) {
     attachFile(file);
-    btnFile.classList.add('active');
     showToast(`Loading ${isImageFile(file) ? 'image' : 'video'}: ${file.name}`);
   } else {
     showToast('Please drop a video or image file');
   }
-});
+}
 
-// Also support drop on the whole document as a fallback
-document.addEventListener('dragover', e => e.preventDefault());
-document.addEventListener('drop', e => e.preventDefault());
+asciiContainer?.addEventListener('dragenter', handleDragEnter);
+asciiContainer?.addEventListener('dragover', handleDragOver);
+asciiContainer?.addEventListener('dragleave', handleDragLeave);
+asciiContainer?.addEventListener('drop', handleGlobalDrop);
+
+window.addEventListener('dragenter', handleDragEnter);
+window.addEventListener('dragover', handleDragOver);
+window.addEventListener('dragleave', handleDragLeave);
+window.addEventListener('drop', handleGlobalDrop);
 
 // ─── Source Buttons ───────────────────────────────────────────────────────────
 
@@ -1561,6 +1661,9 @@ function toggleSettings(forceState) {
   const shouldCollapse = typeof forceState === 'boolean' ? !forceState : !isCurrentlyCollapsed;
 
   settingsPanel.classList.toggle('collapsed', shouldCollapse);
+  if (mobileMenuBtn) {
+    mobileMenuBtn.setAttribute('aria-expanded', String(!shouldCollapse));
+  }
   if (settingsBackdrop) {
     settingsBackdrop.classList.toggle('active', isMobile && !shouldCollapse);
   }
@@ -1940,6 +2043,7 @@ const cvDoneMeta       = $('cvDoneMeta');
 const cvStart          = $('cvStart');
 const cvStop           = $('cvStop');
 const cvSave           = $('cvSave');
+const cvSaveLabel      = $('cvSaveLabel');
 const cvConvertAnother = $('cvConvertAnother');
 const cvDropZone       = $('cvDropZone');
 
@@ -2123,6 +2227,7 @@ function estimateSrtBytes(duration, cols, videoWidth, videoHeight, fps, format =
   const colorMarkup = (isAss || isYoutube || isYtt)
     ? (cfg.colorMode === 'monochrome' || isYoutube ? 0 : cells * 15)
     : (cfg.colorMode === 'monochrome' ? rows * 40 : cells * 28);
+  const cueBytes = cells * bytesPerChar + colorMarkup + (isAss || isYtt ? 50 : 48);
   const totalRaw = cueBytes * Math.ceil(duration * fps);
   return totalRaw;
 }
@@ -2579,6 +2684,31 @@ function cvSetFile(file) {
   cvFile = file;
   const isPlayerFile = Boolean(state.currentFile && state.currentFile === file);
 
+  if (isImageFile(file)) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      cvFileInfo.textContent = isPlayerFile ? `${file.name} (Active File)` : file.name;
+      cvFileInfo.classList.add('loaded');
+      cvMeta.textContent = `${img.naturalWidth || img.width}×${img.naturalHeight || img.height}  ·  Image  ·  ${fmtBytes(file.size)}`;
+      cvStart.disabled = true;
+      if (cvWarning && cvWarningText) {
+        cvWarningText.textContent = 'The video converter requires a video file. To export static images as ASCII text, HTML, or PNG, use the download buttons in the top navigation bar.';
+        cvWarning.style.display = '';
+      }
+      if (cvPreviewSection) cvPreviewSection.style.display = 'block';
+      drawConverterPreview(img);
+    };
+    img.onerror = () => {
+      cvFileInfo.textContent = 'Error loading image file';
+      cvFileInfo.classList.remove('loaded');
+      cvMeta.textContent = '';
+      cvStart.disabled = true;
+    };
+    img.src = url;
+    return;
+  }
+
   // If this is the active video already loaded in the main player, populate metadata immediately
   if (isPlayerFile && sourceVideo && sourceVideo.videoWidth && sourceVideo.duration) {
     cvFileInfo.textContent = `${file.name} (Active Video)`;
@@ -2631,6 +2761,10 @@ function cvSetFile(file) {
 
   cvSourceVideo.addEventListener('loadedmetadata', () => {
     try { cvSourceVideo.currentTime = 0.001; } catch {}
+    onReady();
+  });
+
+  cvSourceVideo.addEventListener('canplay', () => {
     onReady();
   });
 
@@ -2755,18 +2889,36 @@ cvDropZone.addEventListener('drop', e => {
   e.stopPropagation();
   cvDropZone.classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
-  if (isVideoFile(file)) {
+  if (isVideoFile(file) || isImageFile(file)) {
     cvResetUI();
     cvRefreshSettings();
     cvSetFile(file);
-    showToast('Loading video: ' + file.name);
+    showToast(`Loading ${isImageFile(file) ? 'image' : 'video'}: ${file.name}`);
   } else {
-    showToast('Please drop a video file');
+    showToast('Please drop a video or image file');
   }
 });
 
 cvStart.addEventListener('click', async () => {
   if (!cvSourceVideo || !cvFile) { showToast('Load a video file first'); return; }
+
+  // Ensure source video is buffered and ready before exporting
+  if (cvSourceVideo.readyState < 2) {
+    try {
+      await new Promise(resolve => {
+        if (cvSourceVideo.readyState >= 2) return resolve();
+        const onData = () => {
+          cvSourceVideo.removeEventListener('loadeddata', onData);
+          cvSourceVideo.removeEventListener('canplay', onData);
+          resolve();
+        };
+        cvSourceVideo.addEventListener('loadeddata', onData, { once: true });
+        cvSourceVideo.addEventListener('canplay', onData, { once: true });
+        setTimeout(resolve, 1500);
+      });
+    } catch {}
+  }
+
   readConfig();
   updateExportModeUI();
   updateLongVideoWarning();
@@ -2895,6 +3047,7 @@ cvStart.addEventListener('click', async () => {
           cvMimeType = resultMime || 'text/html;charset=utf-8';
           cvStop.style.display = 'none';
           cvSave.style.display = '';
+          const saveLabel = cvSaveLabel || $('cvSaveLabel');
           if (saveLabel) {
             saveLabel.textContent = 'Download HTML Player';
           }
@@ -2958,6 +3111,7 @@ cvStart.addEventListener('click', async () => {
         cvMimeType = resultMime;
         cvStop.style.display = 'none';
         cvSave.style.display = '';
+        const saveLabel = cvSaveLabel || $('cvSaveLabel');
         if (saveLabel) {
           saveLabel.textContent = isYtt ? 'Download .ytt' : isAss ? 'Download ASS' : 'Download Subtitles';
         }
@@ -3031,6 +3185,10 @@ cvStart.addEventListener('click', async () => {
           cvMimeType = 'image/gif';
           cvStop.style.display = 'none';
           cvSave.style.display = '';
+          const saveLabel = cvSaveLabel || $('cvSaveLabel');
+          if (saveLabel) {
+            saveLabel.textContent = 'Download Animated GIF';
+          }
           cvConvertAnother.style.display = '';
           cvProgressFill.style.width = '100%';
           cvProgressPct.textContent = '100%';
@@ -3041,6 +3199,9 @@ cvStart.addEventListener('click', async () => {
           cvDoneSection.style.display = 'flex';
           cvDoneMeta.textContent = `${fmtBytes(blob?.size || 0)}  ·  Animated GIF  ·  ${gifFps} FPS  ·  ${result?.cols || cfg.cols} cols`;
           showToast('Animated GIF ready to download');
+          try {
+            if (blob) download(filename, blob, 'image/gif');
+          } catch {}
         },
         onError(message) {
           if (cvPreviewBadge) cvPreviewBadge.textContent = 'ASCII PREVIEW';
@@ -3095,6 +3256,7 @@ cvStart.addEventListener('click', async () => {
 
       cvStop.style.display           = 'none';
       cvSave.style.display           = '';
+      const saveLabel = cvSaveLabel || $('cvSaveLabel');
       if (saveLabel) {
         saveLabel.textContent = 'Download Video';
       }
@@ -3320,7 +3482,7 @@ if (typeof window !== 'undefined') {
 
 // ─── PWA Service Worker Registration & Cache Purging ──────────────────────────
 
-const CURRENT_CACHE_NAME = 'ascili-cache-v2.4.0';
+const CURRENT_CACHE_NAME = 'ascili-cache-v2.4.1';
 
 if (typeof window !== 'undefined' && 'caches' in window) {
   caches.keys().then(keys => {

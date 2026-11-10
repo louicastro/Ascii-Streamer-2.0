@@ -95,7 +95,9 @@ public class MainActivity extends AppCompatActivity {
         // Handle edge-to-edge window insets (notches, status bar, gesture navigation bar)
         ViewCompat.setOnApplyWindowInsetsListener(rootContainer, (v, windowInsets) -> {
             Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+            // The bundled web UI applies top/bottom safe-area padding itself.
+            // Applying those insets here as well creates a visible double gap.
+            v.setPadding(insets.left, 0, insets.right, 0);
             return windowInsets;
         });
 
@@ -124,6 +126,9 @@ public class MainActivity extends AppCompatActivity {
         // Mobile Viewport Fixes - Guarantees proper responsive scaling
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
+        settings.setTextZoom(100);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
@@ -139,6 +144,11 @@ public class MainActivity extends AppCompatActivity {
         // Media streaming optimizations
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadsImagesAutomatically(true);
+        settings.setOffscreenPreRaster(true);
+
+        // Keep remote debugging available for debug builds without exposing
+        // production WebViews to local inspection.
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
 
         // Terminal aesthetics - DO NOT use setLayerType(LAYER_TYPE_HARDWARE) to prevent WebGL/Canvas glitches
         webView.setBackgroundColor(getColor(R.color.terminal_black));
@@ -205,14 +215,16 @@ public class MainActivity extends AppCompatActivity {
         }
         if (intent == null) {
             intent = new Intent(Intent.ACTION_GET_CONTENT);
-            intent.setType("video/*");
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"video/*", "image/*"});
             intent.addCategory(Intent.CATEGORY_OPENABLE);
         }
 
         try {
-            fileChooserLauncher.launch(Intent.createChooser(intent, "Select Video File"));
+            fileChooserLauncher.launch(Intent.createChooser(intent, "Select Video or Image"));
             return true;
         } catch (Exception e) {
+            Toast.makeText(this, "Could not open the media picker.", Toast.LENGTH_SHORT).show();
             if (pendingFileChooserCallback != null) {
                 pendingFileChooserCallback.onReceiveValue(null);
                 pendingFileChooserCallback = null;
@@ -247,6 +259,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (pendingFileChooserCallback != null) {
+            pendingFileChooserCallback.onReceiveValue(null);
+            pendingFileChooserCallback = null;
+        }
         if (webView != null) {
             webView.loadUrl("about:blank");
             webView.destroy();

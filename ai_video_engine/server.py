@@ -264,18 +264,48 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                 return
 
             filename = os.path.basename(self.headers.get("X-Filename", "uploaded_video.mp4"))
-            clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "video.mp4"
+            content_type = self.headers.get("Content-Type", "")
             job_id = str(uuid.uuid4())[:8]
-            input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{clean_name}")
 
-            bytes_left = content_len
-            with open(input_path, "wb") as f:
-                while bytes_left > 0:
-                    chunk = self.rfile.read(min(bytes_left, 65536))
-                    if not chunk:
+            if "multipart/form-data" in content_type and "boundary=" in content_type:
+                # Handle standard multipart/form-data browser file upload
+                from email.parser import BytesParser
+                from email.policy import default
+                raw_body = self.rfile.read(content_len)
+                msg_bytes = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + raw_body
+                msg = BytesParser(policy=default).parsebytes(msg_bytes)
+                file_payload = None
+                extracted_name = None
+                for part in msg.iter_parts():
+                    cd = part.get("Content-Disposition", "")
+                    if "filename=" in cd or part.get_filename():
+                        file_payload = part.get_payload(decode=True)
+                        extracted_name = part.get_filename()
                         break
-                    f.write(chunk)
-                    bytes_left -= len(chunk)
+                if file_payload is not None:
+                    if extracted_name:
+                        filename = os.path.basename(extracted_name)
+                    clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "video.mp4"
+                    input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{clean_name}")
+                    with open(input_path, "wb") as f:
+                        f.write(file_payload)
+                else:
+                    clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "video.mp4"
+                    input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{clean_name}")
+                    with open(input_path, "wb") as f:
+                        f.write(raw_body)
+            else:
+                # Direct binary stream upload
+                clean_name = "".join(c for c in filename if c.isalnum() or c in "._-") or "video.mp4"
+                input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{clean_name}")
+                bytes_left = content_len
+                with open(input_path, "wb") as f:
+                    while bytes_left > 0:
+                        chunk = self.rfile.read(min(bytes_left, 65536))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bytes_left -= len(chunk)
 
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             preset_name = query.get("preset", ["matrix"])[0]
@@ -364,8 +394,12 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                 input_is_allowed = (
                     bool(resolved_input)
                     and os.path.isfile(resolved_input)
-                    and os.path.commonpath((resolved_input, os.path.realpath(INPUT_DIR)))
-                    == os.path.realpath(INPUT_DIR)
+                    and (
+                        os.path.commonpath((resolved_input, os.path.realpath(INPUT_DIR)))
+                        == os.path.realpath(INPUT_DIR)
+                        or os.path.commonpath((resolved_input, os.path.realpath(UPLOAD_DIR)))
+                        == os.path.realpath(UPLOAD_DIR)
+                    )
                 )
             except (TypeError, ValueError):
                 input_is_allowed = False
@@ -373,7 +407,7 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
             if not input_is_allowed:
                 self._set_cors("application/json", status=400)
                 self.wfile.write(json.dumps({
-                    "error": f"input_path must be a valid file inside {INPUT_DIR}"
+                    "error": f"input_path must be a valid file inside {INPUT_DIR} or {UPLOAD_DIR}"
                 }).encode("utf-8"))
                 return
             input_path = resolved_input

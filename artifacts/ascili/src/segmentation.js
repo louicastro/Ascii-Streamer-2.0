@@ -38,6 +38,8 @@ export class AsciliSubjectDetector {
     const pixelCount = this.maskWidth * this.maskHeight;
     this.rawMask = new Float32Array(pixelCount);
     this.smoothedMask = new Float32Array(pixelCount);
+    this._tempFilterBuf = new Float32Array(pixelCount);
+    this._r8Buffer = new Uint8Array(pixelCount);
     this.backgroundModel = new Float32Array(pixelCount * 3);
     this.prevFrame = new Uint8Array(pixelCount * 3);
     this.motionEnergy = new Float32Array(pixelCount);
@@ -52,6 +54,11 @@ export class AsciliSubjectDetector {
     this.neuralPending = false;
     this.lastProcessTimeMs = 0;
     this.coverageRatio = 0.0; // percentage of frame detected as subject
+    this._lastProcessedSource = null;
+    this._lastProcessedTime = -1;
+    this._lastProcessedSensitivity = this.sensitivity;
+    this._lastProcessedSmoothing = this.smoothing;
+    this._lastProcessedMode = this.mode;
 
     // Auto-attempt neural loader in background when online
     this._tryInitNeural();
@@ -159,10 +166,14 @@ export class AsciliSubjectDetector {
   resetState() {
     this.rawMask.fill(0);
     this.smoothedMask.fill(0);
+    this._tempFilterBuf.fill(0);
+    this._r8Buffer.fill(0);
     this.motionEnergy.fill(0);
     this.hasBgModel = false;
     this.hasPrevFrame = false;
     this.coverageRatio = 0.0;
+    this._lastProcessedSource = null;
+    this._lastProcessedTime = -1;
   }
 
   /**
@@ -174,11 +185,32 @@ export class AsciliSubjectDetector {
    */
   processFrame(sourceEl) {
     if (!sourceEl || !this.enabled) {
+      this._lastProcessedSource = null;
+      this._lastProcessedTime = -1;
       this.coverageRatio = 0.0;
       return this.smoothedMask;
     }
 
     const t0 = performance.now();
+    const canReuseVideoFrame = typeof HTMLVideoElement !== 'undefined' &&
+      sourceEl instanceof HTMLVideoElement &&
+      sourceEl.duration > 0 &&
+      Number.isFinite(sourceEl.currentTime) &&
+      sourceEl.readyState >= 2 &&
+      this._lastProcessedSource === sourceEl &&
+      this._lastProcessedTime === sourceEl.currentTime &&
+      this._lastProcessedSensitivity === this.sensitivity &&
+      this._lastProcessedSmoothing === this.smoothing &&
+      this._lastProcessedMode === this.mode;
+    if (canReuseVideoFrame) return this.smoothedMask;
+
+    const canReuseImageFrame = (typeof HTMLImageElement !== 'undefined' && sourceEl instanceof HTMLImageElement) &&
+      this._lastProcessedSource === sourceEl &&
+      this._lastProcessedSensitivity === this.sensitivity &&
+      this._lastProcessedSmoothing === this.smoothing &&
+      this._lastProcessedMode === this.mode;
+    if (canReuseImageFrame) return this.smoothedMask;
+
     const w = this.maskWidth;
     const h = this.maskHeight;
     const total = w * h;
@@ -211,6 +243,17 @@ export class AsciliSubjectDetector {
     }
 
     this.lastProcessTimeMs = performance.now() - t0;
+    this._lastProcessedSource = sourceEl;
+    this._lastProcessedSensitivity = this.sensitivity;
+    this._lastProcessedSmoothing = this.smoothing;
+    this._lastProcessedMode = this.mode;
+    if (typeof HTMLVideoElement !== 'undefined' &&
+        sourceEl instanceof HTMLVideoElement &&
+        sourceEl.duration > 0) {
+      this._lastProcessedTime = sourceEl.currentTime;
+    } else {
+      this._lastProcessedTime = 0;
+    }
     return this.smoothedMask;
   }
 
@@ -357,12 +400,30 @@ export class AsciliSubjectDetector {
         }
 
         this.rawMask[i] = rawConfidence;
+      }
+    }
 
-        // Exponential Moving Average (EMA) for flicker-free continuity
-        const prev = this.smoothedMask[i];
-        const next = prev * smooth + rawConfidence * (1.0 - smooth);
-        this.smoothedMask[i] = next;
+    // 3. 3x3 separable spatial smoothing on rawMask to eliminate speckle noise and ragged holes
+    for (let y = 0; y < h; y++) {
+      const yOff = y * w;
+      for (let x = 0; x < w; x++) {
+        const i0 = yOff + Math.max(0, x - 1);
+        const i1 = yOff + x;
+        const i2 = yOff + Math.min(w - 1, x + 1);
+        this._tempFilterBuf[i1] = (this.rawMask[i0] + this.rawMask[i1] * 2 + this.rawMask[i2]) * 0.25;
+      }
+    }
 
+    for (let y = 0; y < h; y++) {
+      const yPrev = Math.max(0, y - 1) * w;
+      const yCurr = y * w;
+      const yNext = Math.min(h - 1, y + 1) * w;
+      for (let x = 0; x < w; x++) {
+        const idx = yCurr + x;
+        const filtered = (this._tempFilterBuf[yPrev + x] + this._tempFilterBuf[idx] * 2 + this._tempFilterBuf[yNext + x]) * 0.25;
+        const prev = this.smoothedMask[idx];
+        const next = prev * smooth + filtered * (1.0 - smooth);
+        this.smoothedMask[idx] = next;
         if (next >= thresh) subjectCount++;
       }
     }
@@ -397,8 +458,33 @@ export class AsciliSubjectDetector {
         gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
       }
 
-      // Universal 4-channel RGBA texture (100% compatible with WebGL 1 and WebGL 2 drivers)
       const total = this.maskWidth * this.maskHeight;
+      const isGl2 = (typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext);
+
+      if (isGl2) {
+        if (!this._r8Buffer || this._r8Buffer.length !== total) {
+          this._r8Buffer = new Uint8Array(total);
+        }
+        const r8 = this._r8Buffer;
+        const smoothed = this.smoothedMask;
+        for (let i = 0; i < total; i++) {
+          r8[i] = Math.min(255, Math.max(0, Math.round(smoothed[i] * 255.0)));
+        }
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.R8,
+          this.maskWidth,
+          this.maskHeight,
+          0,
+          gl.RED,
+          gl.UNSIGNED_BYTE,
+          r8
+        );
+        return this.maskTexture;
+      }
+
+      // Universal 4-channel RGBA texture for WebGL 1
       if (!this._rgbaBuffer || this._rgbaBuffer.length !== total * 4) {
         this._rgbaBuffer = new Uint8Array(total * 4);
       }
@@ -436,8 +522,18 @@ export class AsciliSubjectDetector {
    * Retrieves the smoothed mask confidence [0.0, 1.0] at a normalized coordinate (u, v).
    */
   sampleMaskAt(u, v) {
-    const x = Math.min(this.maskWidth - 1, Math.max(0, Math.floor(u * this.maskWidth)));
-    const y = Math.min(this.maskHeight - 1, Math.max(0, Math.floor(v * this.maskHeight)));
-    return this.smoothedMask[y * this.maskWidth + x] || 0.0;
+    const x = Math.min(this.maskWidth - 1, Math.max(0, u * (this.maskWidth - 1)));
+    const y = Math.min(this.maskHeight - 1, Math.max(0, v * (this.maskHeight - 1)));
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = Math.min(this.maskWidth - 1, x0 + 1);
+    const y1 = Math.min(this.maskHeight - 1, y0 + 1);
+    const tx = x - x0;
+    const ty = y - y0;
+    const row0 = y0 * this.maskWidth;
+    const row1 = y1 * this.maskWidth;
+    const top = this.smoothedMask[row0 + x0] * (1 - tx) + this.smoothedMask[row0 + x1] * tx;
+    const bottom = this.smoothedMask[row1 + x0] * (1 - tx) + this.smoothedMask[row1 + x1] * tx;
+    return top * (1 - ty) + bottom * ty;
   }
 }
