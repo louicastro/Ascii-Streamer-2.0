@@ -56,8 +56,16 @@ Open **[http://localhost:8000](http://localhost:8000)** to view the live streami
     "cols": 140
   }
   ```
+  For safety, the API only accepts files inside `ASCILI_INPUT_DIR` (which
+  defaults to `uploaded_videos`). Set that environment variable to a dedicated
+  staging directory when using `/api/convert`; the upload endpoint remains the
+  recommended way to submit files.
 - `GET /api/job/<job_id>` — Monitor conversion percent, processing FPS, and ETA.
 - `GET /api/download/<job_id>` — Download the finished ASCII video file (.mp4).
+
+Set `ASCILI_API_KEY` to require the same API key for conversion, cancellation,
+job status, downloads, and the live stream. Health and preset discovery remain
+public.
 
 ---
 

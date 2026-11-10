@@ -32,8 +32,10 @@ JOBS: Dict[str, ConversionJob] = {}
 JOB_TIMESTAMPS: Dict[str, float] = {}
 OUTPUT_DIR = os.path.abspath("converted_videos")
 UPLOAD_DIR = os.path.abspath("uploaded_videos")
+INPUT_DIR = os.path.abspath(os.environ.get("ASCILI_INPUT_DIR", UPLOAD_DIR))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(INPUT_DIR, exist_ok=True)
 
 MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
 
@@ -127,6 +129,14 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
                     "brightness": cfg.brightness,
                 }
             self.wfile.write(json.dumps(presets_data, indent=2).encode("utf-8"))
+            return
+
+        # Job metadata, downloads, and live streams may expose private data.
+        if (
+            path.startswith("/api/job/")
+            or path.startswith("/api/download/")
+            or path == "/api/stream"
+        ) and not self._check_auth():
             return
 
         # 3. Job Status Query: /api/job/<job_id>
@@ -349,10 +359,24 @@ class AsciliServerHandler(BaseHTTPRequestHandler):
         # 1. Start Conversion: /api/convert
         if path == "/api/convert":
             input_path = payload.get("input_path")
-            if not input_path or not os.path.isfile(input_path):
+            try:
+                resolved_input = os.path.realpath(input_path) if isinstance(input_path, str) else ""
+                input_is_allowed = (
+                    bool(resolved_input)
+                    and os.path.isfile(resolved_input)
+                    and os.path.commonpath((resolved_input, os.path.realpath(INPUT_DIR)))
+                    == os.path.realpath(INPUT_DIR)
+                )
+            except (TypeError, ValueError):
+                input_is_allowed = False
+
+            if not input_is_allowed:
                 self._set_cors("application/json", status=400)
-                self.wfile.write(json.dumps({"error": f"input_path '{input_path}' is not a valid accessible file"}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "error": f"input_path must be a valid file inside {INPUT_DIR}"
+                }).encode("utf-8"))
                 return
+            input_path = resolved_input
 
             job_id = str(uuid.uuid4())[:8]
             ext = ".webm" if str(payload.get("format", "mp4")).lower() == "webm" else ".mp4"
