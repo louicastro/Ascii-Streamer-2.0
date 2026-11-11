@@ -16,6 +16,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -51,8 +52,12 @@ jobs:
 
       - name: Install system dependencies (FFmpeg & Cairo)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libcairo2-dev pkg-config
+          # Replace flaky Azure mirror with main Ubuntu archive
+          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|g' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt /etc/apt/sources.list 2>/dev/null || true
+          for i in 1 2 3; do
+            sudo apt-get update -y && break || sleep 5
+          done
+          sudo apt-get install -y --no-install-recommends ffmpeg libcairo2-dev pkg-config
 
       - name: Install Python dependencies
         run: |
