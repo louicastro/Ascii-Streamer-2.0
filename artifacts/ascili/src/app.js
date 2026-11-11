@@ -516,6 +516,16 @@ function readConfig() {
       updateAsciiLayout(dims.rows, dims.cols);
     }
   }
+
+  if (cvOverlay && cvOverlay.classList.contains('open')) {
+    if (cvCfgCols) cvCfgCols.textContent = cfg.cols + ' cols';
+    updateExportModeUI();
+    updateLongVideoWarning();
+    const vid = (cvSourceVideo && cvSourceVideo.videoWidth) ? cvSourceVideo : sourceVideo;
+    if (vid && cvPreviewSection && cvPreviewSection.style.display !== 'none') {
+      drawConverterPreview(vid);
+    }
+  }
 }
 
 // ─── Apply Preset ────────────────────────────────────────────────────────────
@@ -3482,7 +3492,7 @@ if (typeof window !== 'undefined') {
 
 // ─── PWA Service Worker Registration & Cache Purging ──────────────────────────
 
-const CURRENT_CACHE_NAME = 'ascili-cache-v2.4.1';
+const CURRENT_CACHE_NAME = 'ascili-cache-v2.4.2';
 
 if (typeof window !== 'undefined' && 'caches' in window) {
   caches.keys().then(keys => {

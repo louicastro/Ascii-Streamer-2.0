@@ -313,9 +313,23 @@ export class AsciliVideoExporter {
     const crop = computeCropBox(vw, vh, cfg.aspectRatio);
     const resInfo = computeFontForResolution(cfg.cols || 80, vw, vh, resolution);
     const overrides = resInfo ? { fontSize: resInfo.fontSize } : undefined;
-    const fontSize = overrides?.fontSize ?? cfg.fontSize ?? 10;
+    let fontSize = overrides?.fontSize ?? cfg.fontSize ?? 10;
     const cols = Math.min(1000, Math.max(20, Math.round(cfg.cols || 80)));
     const rows = Math.max(1, Math.round(cols * (crop.sh / crop.sw) * 0.45));
+
+    // In 'auto' resolution mode, clamp fontSize if extreme columns exceed browser limits
+    if (!resInfo) {
+      const maxDim = 8192;
+      const maxArea = 16_777_216;
+      while (fontSize > 1 && (
+        Math.ceil(cols * fontSize * CHAR_W_FACTOR) > maxDim ||
+        (rows * fontSize) > maxDim ||
+        (Math.ceil(cols * fontSize * CHAR_W_FACTOR) * (rows * fontSize)) > maxArea
+      )) {
+        fontSize--;
+      }
+    }
+
     const charW = fontSize * CHAR_W_FACTOR;
     const frameW = makeEven(Math.ceil(cols * charW));
     const frameH = makeEven(rows * fontSize);
